@@ -4,14 +4,24 @@ import { Button } from "../components/Button.tsx";
 import type { Services } from "../services.ts";
 import styles from "./Settings.module.css";
 
-export function Settings({ services, email, onChanged, onBack }: { services: Services; email: string | null; onChanged: () => void; onBack: () => void }) {
-  const [message, setMessage] = useState<string | null>(null);
-  const busy = services.engine.isBusy();
+export function Settings({ services, email, onChanged, onBack }: { services: Services; email: string | null; onChanged: () => Promise<unknown> | void; onBack: () => void }) {
+  const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
+  const [pending, setPending] = useState(false);
+  const busy = services.engine.isBusy() || pending;
 
   async function act(fn: () => Promise<void>, done: string) {
-    await fn();
-    setMessage(done);
-    onChanged();
+    if (pending) return;
+    setPending(true);
+    setMessage(null);
+    try {
+      await fn();
+      await onChanged();
+      setMessage({ text: done, error: false });
+    } catch (e) {
+      setMessage({ text: e instanceof Error ? e.message : String(e), error: true });
+    } finally {
+      setPending(false);
+    }
   }
 
   return (
@@ -38,7 +48,7 @@ export function Settings({ services, email, onChanged, onBack }: { services: Ser
         </div>
         <Button variant="secondary" disabled={busy} onClick={() => act(() => services.store.clearScanData(), "Scan data cleared.")}>Clear scan data</Button>
       </div>
-      {message && <p role="status">{message}</p>}
+      {message && <p role={message.error ? "alert" : "status"}>{message.text}</p>}
       <Button variant="secondary" onClick={onBack}>Back</Button>
     </section>
   );

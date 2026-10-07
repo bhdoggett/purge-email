@@ -30,5 +30,8 @@ export function getServices(): Promise<Services> {
     engine = new ScanEngine({ gmail, judge: createJudge(), store, labelName: LABEL_NAME, notify: (t, b) => void notify(t, b) });
     return { store, gmail, engine, labelName: LABEL_NAME };
   })();
+  services.catch(() => {
+    services = null;
+  });
   return services;
 }
