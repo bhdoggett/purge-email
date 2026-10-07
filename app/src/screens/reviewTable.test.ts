@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "@core/decide.ts";
 import { fakeAnswers, makeSummary } from "../scan/fakes.ts";
-import { buildTableRows, EMPTY_SELECTION, filterRows, NO_FILTERS, select, selectAll, suggestedOverrides, type TableRow } from "./reviewTable.ts";
+import { buildTableRows, EMPTY_SELECTION, filterRows, NO_FILTERS, pruneSelection, select, selectAll, suggestedOverrides, type TableRow } from "./reviewTable.ts";
 
 const summaries = new Map([
   ["p", makeSummary("p", { from: "Groupon", subject: "70% off", date: "Mon, 01 Jan 2014 00:00:00 +0000" })],
@@ -105,5 +105,29 @@ describe("suggestedOverrides", () => {
       { id: "m", slug: expect.any(String), at: 9 },
     ]);
     expect(r.skipped).toBe(1);
+  });
+});
+
+describe("pruneSelection", () => {
+  it("drops ids that are not in the filtered rows and forgets the anchor", () => {
+    const list = rows();
+    const sel = { ids: new Set(["s", "m", "gone"]), anchor: 1 };
+    const r = pruneSelection(sel, list.filter((x) => x.id !== "m"));
+    expect(r.ids).toEqual(new Set(["s"]));
+    expect(r.anchor).toBeNull();
+  });
+  it("keeps the selection and anchor unchanged when nothing is dropped", () => {
+    const sel = { ids: new Set(["s", "m"]), anchor: 1 };
+    const r = pruneSelection(sel, rows());
+    expect(r.ids).toEqual(new Set(["s", "m"]));
+    expect(r.anchor).toBe(1);
+  });
+  it("never mutates its input", () => {
+    const sel = { ids: new Set(["s", "gone"]), anchor: 0 };
+    pruneSelection(sel, rows());
+    expect(sel.ids).toEqual(new Set(["s", "gone"]));
+    expect(sel.anchor).toBe(0);
+    pruneSelection(EMPTY_SELECTION, rows());
+    expect(EMPTY_SELECTION.ids.size).toBe(0);
   });
 });

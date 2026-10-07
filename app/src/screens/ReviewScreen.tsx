@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { Answers } from "@core/questions.ts";
 import { PURGE_KINDS } from "@core/questions.ts";
 import type { Settings } from "@core/decide.ts";
@@ -9,7 +9,7 @@ import type { Summary } from "../gmail/client.ts";
 import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
 import type { Services } from "../services.ts";
 import type { Override } from "../storage/db.ts";
-import { buildTableRows, type DecisionFilter, EMPTY_SELECTION, type Filters, filterRows, NO_FILTERS, type Selection, suggestedOverrides } from "./reviewTable.ts";
+import { buildTableRows, type DecisionFilter, EMPTY_SELECTION, type Filters, filterRows, NO_FILTERS, pruneSelection, type Selection, suggestedOverrides } from "./reviewTable.ts";
 import { ReviewTable } from "./ReviewTable.tsx";
 import styles from "./ReviewScreen.module.css";
 
@@ -73,6 +73,12 @@ export function ReviewScreen({ services, go, onNext }: { services: Services; go:
 
   const rows = useMemo(() => (data ? buildTableRows(data.ids, data.summaries, data.answers, overrides, data.settings) : []), [data, overrides]);
   const filtered = useMemo(() => filterRows(rows, filters), [rows, filters]);
+  // An action can move selected rows out of the filtered list (e.g. "Undo my change" under "Changed by you").
+  // Drop them before paint so the next action never changes an email the person can't see.
+  // Filter changes already clear the selection, so this only bites after an action rebuilds the rows.
+  useLayoutEffect(() => {
+    setSelection((s) => pruneSelection(s, filtered));
+  }, [filtered]);
 
   function changeFilters(next: Partial<Filters>) {
     setFilters((f) => ({ ...f, ...next }));

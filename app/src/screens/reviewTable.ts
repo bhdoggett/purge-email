@@ -139,6 +139,14 @@ export function selectAll(rows: TableRow[]): Selection {
   return { ids: new Set(rows.map((r) => r.id)), anchor: null };
 }
 
+/** Keeps only selected ids still in `rows`, so an action never touches a row the person can't see. */
+export function pruneSelection(sel: Selection, rows: TableRow[]): Selection {
+  const shown = new Set(rows.map((r) => r.id));
+  const ids = new Set([...sel.ids].filter((id) => shown.has(id)));
+  // A dropped row shifts indexes, so the Shift-click anchor can no longer be trusted.
+  return ids.size === sel.ids.size ? sel : { ids, anchor: null };
+}
+
 /** Overrides for "Use suggested label": one per selected row that has a suggestion. */
 export function suggestedOverrides(rows: TableRow[], ids: Set<string>, at: number): { list: Override[]; skipped: number } {
   const list: Override[] = [];
