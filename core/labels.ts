@@ -17,6 +17,25 @@ export function appLabelNames(prefix: string): string[] {
   return [...PURGE_KINDS.map((k) => `${prefix}/${KIND_SLUGS[k.id]}`), `${prefix}/${MAYBE}`];
 }
 
+export const ALL_SLUGS: readonly string[] = [...PURGE_KINDS.map((k) => KIND_SLUGS[k.id]), MAYBE];
+
+export function kindOfSlug(slug: string): PurgeKind | null {
+  return PURGE_KINDS.find((k) => KIND_SLUGS[k.id] === slug)?.id ?? null;
+}
+
+export function slugOfLabel(label: string, prefix: string): string | null {
+  const head = `${prefix}/`;
+  return label.startsWith(head) ? label.slice(head.length) : null;
+}
+
+/** Jev's top kind across every kind, checked or not: what a kept email would most likely be filed under. */
+export function suggestedSlug(answers: Answers | null): string | null {
+  if (!answers || answers.version !== QUESTIONS_VERSION) return null;
+  let best: PurgeKind = PURGE_KINDS[0]!.id;
+  for (const k of PURGE_KINDS) if (answers.kind[k.id] > answers.kind[best]) best = k.id;
+  return KIND_SLUGS[best];
+}
+
 export function labelFor(decision: Decision, answers: Answers | null, settings: Settings): string | null {
   if (decision === "keep") return null;
   if (!answers || answers.version !== QUESTIONS_VERSION) return null;

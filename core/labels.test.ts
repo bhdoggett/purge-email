@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "./decide.ts";
-import { appLabelNames, candidateQuery, olderThan, labelFor, needsRescan, validatePrefix } from "./labels.ts";
+import { ALL_SLUGS, appLabelNames, candidateQuery, kindOfSlug, olderThan, labelFor, needsRescan, slugOfLabel, suggestedSlug, validatePrefix } from "./labels.ts";
 import { type Answers, QUESTIONS_VERSION } from "./questions.ts";
 
 function answers(kind: Partial<Answers["kind"]>): Answers {
@@ -67,5 +67,36 @@ describe("needsRescan", () => {
     expect(needsRescan(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, keepStarred: false })).toBe(true);
     expect(needsRescan(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, keepAttachments: false })).toBe(true);
     expect(needsRescan(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, labelPrefix: "x", strictness: "careful", purgeKinds: [] })).toBe(false);
+  });
+});
+
+describe("suggestedSlug", () => {
+  it("picks the top kind even when it is not checked", () => {
+    expect(suggestedSlug(answers({ securityAlert: 0.7, promotion: 0.2 }))).toBe("security-alert");
+  });
+  it("breaks ties by PURGE_KINDS order", () => {
+    expect(suggestedSlug(answers({ promotion: 0.4, newsletter: 0.4 }))).toBe("newsletter");
+  });
+  it("ignores none", () => {
+    expect(suggestedSlug(answers({ none: 0.9, shipping: 0.05 }))).toBe("shipping");
+  });
+  it("is null without current answers", () => {
+    expect(suggestedSlug(null)).toBeNull();
+    expect(suggestedSlug({ ...answers({ promotion: 1 }), version: QUESTIONS_VERSION - 1 })).toBeNull();
+  });
+});
+
+describe("slug helpers", () => {
+  it("lists kind slugs then maybe", () => {
+    expect(ALL_SLUGS).toEqual(["newsletter", "promotion", "social", "security-alert", "shipping", "scam", "work", "automated", "maybe"]);
+  });
+  it("reads the slug of a label under the prefix only", () => {
+    expect(slugOfLabel("purge/promotion", "purge")).toBe("promotion");
+    expect(slugOfLabel("old/promotion", "purge")).toBeNull();
+    expect(slugOfLabel("purge", "purge")).toBeNull();
+  });
+  it("maps a slug back to its kind", () => {
+    expect(kindOfSlug("security-alert")).toBe("securityAlert");
+    expect(kindOfSlug("maybe")).toBeNull();
   });
 });
