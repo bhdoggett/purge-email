@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { type SecretsStatus, secretsStatus } from "./bridge/tauri.ts";
 import { Button } from "./components/Button.tsx";
 import { Header } from "./components/Header.tsx";
+import { Review } from "./screens/Review.tsx";
 import { Rules } from "./screens/Rules.tsx";
 import { Scan } from "./screens/Scan.tsx";
 import { Settings } from "./screens/Settings.tsx";
@@ -51,7 +52,9 @@ function Shell({ services }: { services: Services }) {
         setError(null);
         const s = await refresh();
         const wizard = await services.store.getWizard();
-        setScreen(hasCredentials(s) ? "rules" : wizard.length ? "wizard" : "welcome");
+        const ready = hasCredentials(s);
+        const scan = ready ? await services.store.getScan() : null;
+        setScreen(ready ? (scan?.finished ? "review" : "rules") : wizard.length ? "wizard" : "welcome");
       } catch (e) {
         setError(errorText(e));
       }
@@ -85,7 +88,7 @@ function Shell({ services }: { services: Services }) {
         )}
         {screen === "rules" && <Rules services={services} go={go} />}
         {screen === "scan" && <Scan services={services} go={go} />}
-        {screen === "review" && <p>review</p>}
+        {screen === "review" && <Review services={services} go={go} />}
       </main>
     </div>
   );
