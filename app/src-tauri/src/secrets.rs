@@ -1,4 +1,6 @@
 use crate::error::AppError;
+use base64::{engine::general_purpose::STANDARD, Engine};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -8,6 +10,12 @@ pub const JEV: &str = "jev";
 pub const GOOGLE_CLIENT: &str = "google_client";
 pub const GMAIL_REFRESH: &str = "gmail_refresh_token";
 pub const GMAIL_EMAIL: &str = "gmail_email";
+/// Base64 AES-256 key the web view uses to encrypt email data in IndexedDB.
+pub const LOCAL_DATA_KEY: &str = "local_data_key";
+/// Removed by sign out; the local data key stays so saved scan data remains readable.
+const SIGN_IN_SECRETS: [&str; 2] = [GMAIL_REFRESH, GMAIL_EMAIL];
+/// Removed by a full reset.
+const ALL_SECRETS: [&str; 5] = [JEV, GOOGLE_CLIENT, GMAIL_REFRESH, GMAIL_EMAIL, LOCAL_DATA_KEY];
 
 /// All secrets live in ONE Keychain item, read once per launch and cached in memory.
 /// macOS asks for permission per item and per build, so one item means one prompt
@@ -81,16 +89,41 @@ pub fn get(name: &str) -> Result<Option<String>, AppError> {
     with_vault(|m| m.get(name).cloned())
 }
 
-pub fn delete(name: &str) -> Result<(), AppError> {
+/// Runs `f` on the vault and saves it when `f` reports a change. If saving fails the
+/// cache is put back as it was, so it never holds something the Keychain doesn't.
+fn modify_vault<T>(f: impl FnOnce(&mut HashMap<String, String>) -> (T, bool)) -> Result<T, AppError> {
     let mut guard = CACHE.lock().map_err(|_| AppError::Keychain("Key cache is unavailable".into()))?;
-    let mut map = match guard.take() {
+    let before = match guard.take() {
         Some(m) => m,
         None => load_vault()?,
     };
-    let existed = map.remove(name).is_some();
-    let result = if existed { write_vault(&map) } else { Ok(()) };
+    let mut map = before.clone();
+    let (out, changed) = f(&mut map);
+    if changed {
+        if let Err(e) = write_vault(&map) {
+            *guard = Some(before);
+            return Err(e);
+        }
+    }
     *guard = Some(map);
-    result
+    Ok(out)
+}
+
+/// Returns the local data key, adding a new random one to `vault` if missing (true when added).
+fn ensure_data_key(vault: &mut HashMap<String, String>) -> (String, bool) {
+    if let Some(k) = vault.get(LOCAL_DATA_KEY) {
+        return (k.clone(), false);
+    }
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill(&mut bytes);
+    let key = STANDARD.encode(bytes);
+    vault.insert(LOCAL_DATA_KEY.to_string(), key.clone());
+    (key, true)
+}
+
+/// Removes `names` from `vault`; true if anything was there.
+fn remove_all(vault: &mut HashMap<String, String>, names: &[&str]) -> bool {
+    names.iter().fold(false, |changed, name| vault.remove(*name).is_some() || changed)
 }
 
 pub fn get_jev() -> Result<String, AppError> {
@@ -149,17 +182,55 @@ pub fn secrets_status() -> Result<Status, AppError> {
 
 #[tauri::command]
 pub async fn sign_out(cache: tauri::State<'_, crate::state::TokenCache>) -> Result<(), AppError> {
-    delete(GMAIL_REFRESH)?;
-    delete(GMAIL_EMAIL)?;
+    modify_vault(|m| ((), remove_all(m, &SIGN_IN_SECRETS)))?;
     cache.clear().await;
     Ok(())
 }
 
 #[tauri::command]
 pub async fn clear_secrets(cache: tauri::State<'_, crate::state::TokenCache>) -> Result<(), AppError> {
-    for name in [JEV, GOOGLE_CLIENT, GMAIL_REFRESH, GMAIL_EMAIL] {
-        delete(name)?;
-    }
+    modify_vault(|m| ((), remove_all(m, &ALL_SECRETS)))?;
     cache.clear().await;
     Ok(())
+}
+
+/// The key for encrypting email data at rest, created on first use. Returns only this key.
+#[tauri::command]
+pub fn local_data_key() -> Result<String, AppError> {
+    modify_vault(ensure_data_key)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_data_key_is_created_once_and_then_reused() {
+        let mut vault = HashMap::from([(JEV.to_string(), "jev-secret".to_string())]);
+        let (first, created) = ensure_data_key(&mut vault);
+        assert!(created);
+        assert_eq!(STANDARD.decode(&first).unwrap().len(), 32);
+        assert_eq!(vault.get(LOCAL_DATA_KEY), Some(&first));
+        let (second, created) = ensure_data_key(&mut vault);
+        assert!(!created);
+        assert_eq!(first, second);
+        assert_ne!(first, "jev-secret");
+        assert_ne!(ensure_data_key(&mut HashMap::new()).0, first, "keys are random");
+    }
+
+    #[test]
+    fn clearing_secrets_drops_the_local_data_key_but_sign_out_keeps_it() {
+        assert!(ALL_SECRETS.contains(&LOCAL_DATA_KEY));
+        assert!(!SIGN_IN_SECRETS.contains(&LOCAL_DATA_KEY));
+        let mut vault = HashMap::new();
+        for name in ALL_SECRETS {
+            vault.insert(name.to_string(), "v".to_string());
+        }
+        let mut signed_out = vault.clone();
+        assert!(remove_all(&mut signed_out, &SIGN_IN_SECRETS));
+        assert!(signed_out.contains_key(LOCAL_DATA_KEY));
+        assert!(remove_all(&mut vault, &ALL_SECRETS));
+        assert!(vault.is_empty());
+        assert!(!remove_all(&mut vault, &ALL_SECRETS));
+    }
 }

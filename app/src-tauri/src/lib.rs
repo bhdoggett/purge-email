@@ -15,6 +15,7 @@ pub fn run() {
             secrets::secrets_status,
             secrets::sign_out,
             secrets::clear_secrets,
+            secrets::local_data_key,
             proxy::api_request,
             oauth::google_sign_in,
         ])
