@@ -31,7 +31,7 @@ export function getServices(): Promise<Services> {
   services ??= (async () => {
     const store = await openStore(undefined, { ...DEFAULT_SETTINGS, labelPrefix: DEFAULT_PREFIX });
     let engine: ScanEngine | undefined;
-    const gmail = createGmail({ fetch: proxyFetch, onRateLimit: (ms) => engine?.noteRateLimit(ms) });
+    const gmail = createGmail({ fetch: proxyFetch, onRateLimit: (until) => engine?.noteRateLimit(until) });
     engine = new ScanEngine({ gmail, judge: createJudge(), store, notify: (t, b) => void notify(t, b) });
     return { store, gmail, engine };
   })();

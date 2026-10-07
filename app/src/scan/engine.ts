@@ -69,8 +69,9 @@ export class ScanEngine {
     this.stopRequested = true;
   }
 
-  noteRateLimit(waitMs: number): void {
-    this.set({ rateLimitUntil: this.now() + waitMs });
+  /** When Gmail's shared rate-limit pause ends, or null once requests get through again. */
+  noteRateLimit(until: number | null): void {
+    this.set({ rateLimitUntil: until });
   }
 
   private set(patch: Partial<Progress>): void {

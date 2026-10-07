@@ -16,10 +16,38 @@ describe("gmail client", () => {
       .mockResolvedValueOnce(rateLimited())
       .mockResolvedValueOnce(json(200, { emailAddress: "me@gmail.com" }));
     const onRateLimit = vi.fn();
-    const gmail = createGmail({ fetch, sleep: noSleep, onRateLimit, random: () => 0.5 });
+    let t = 1000;
+    const sleep = async (ms: number) => void (t += ms);
+    const gmail = createGmail({ fetch, sleep, now: () => t, onRateLimit, random: () => 0.5 });
     await expect(gmail.getProfile()).resolves.toEqual({ emailAddress: "me@gmail.com" });
-    expect(onRateLimit).toHaveBeenCalledTimes(2);
-    expect(onRateLimit).toHaveBeenNthCalledWith(1, 2000);
+    // Each report is the absolute time the shared pause ends; null once a request gets through.
+    expect(onRateLimit.mock.calls).toEqual([[3000], [7000], [null]]);
+  });
+
+  it("pauses every request until the shared deadline, not just the one that was rate limited", async () => {
+    const fetch = vi.fn().mockResolvedValueOnce(rateLimited()).mockResolvedValue(json(200, { emailAddress: "a" }));
+    // A sleep that never ends freezes both requests at their first wait.
+    const sleep = vi.fn(() => new Promise<void>(() => {}));
+    const gmail = createGmail({ fetch, sleep, now: () => 0, random: () => 0.5 });
+    void gmail.getProfile();
+    await new Promise((r) => setTimeout(r, 0));
+    void gmail.getProfile();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(sleep.mock.calls).toEqual([[2000], [2000]]);
+  });
+
+  it("never moves the reported deadline earlier while a pause is running", async () => {
+    let t = 0;
+    let calls = 0;
+    // Request A is rate limited three times in a row; request B once, after A's long wait was set.
+    const fetch = vi.fn(async () => (++calls <= 3 ? rateLimited() : json(200, { emailAddress: "a" })));
+    const onRateLimit = vi.fn();
+    const gmail = createGmail({ fetch, sleep: async (ms) => void (t += ms), now: () => t, onRateLimit, random: () => 0.5 });
+    await Promise.all([gmail.getProfile(), gmail.getProfile()]);
+    const deadlines = onRateLimit.mock.calls.map(([d]) => d).filter((d): d is number => d !== null);
+    expect(deadlines).toEqual([...deadlines].sort((a, b) => a - b));
+    expect(onRateLimit.mock.calls.at(-1)).toEqual([null]);
   });
 
   it("retries server errors 5 times then throws", async () => {

@@ -36,8 +36,13 @@ export function isRateLimit(e: GmailError): boolean {
 export interface GmailOptions {
   fetch: (url: string, init?: RequestInit) => Promise<Response>;
   sleep?: (ms: number) => Promise<void>;
-  onRateLimit?: (waitMs: number) => void;
+  /**
+   * Called with the time (ms since epoch) when the shared rate-limit pause ends each time it starts or
+   * gets longer, and with null once a request succeeds after a pause.
+   */
+  onRateLimit?: (until: number | null) => void;
   random?: () => number;
+  now?: () => number;
 }
 
 export interface ListOptions {
@@ -87,10 +92,17 @@ function findByName(labels: { id: string; name: string }[] | undefined, name: st
 export function createGmail(opts: GmailOptions): Gmail {
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const random = opts.random ?? Math.random;
+  const now = opts.now ?? Date.now;
   const backoff = (attempt: number) => Math.min(2 ** Math.min(attempt, 5) * 2000, 60_000) * (0.75 + random() * 0.5);
+
+  // Gmail's rate limit is per user, so when one request is told to slow down every request waits
+  // for the same deadline. Without this, the other requests keep going and each waits on its own timer.
+  let pausedUntil = 0;
+  let paused = false;
 
   async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
     for (let attempt = 0; ; attempt++) {
+      for (let wait = pausedUntil - now(); wait > 0; wait = pausedUntil - now()) await sleep(wait);
       let res: Response;
       try {
         res = await opts.fetch(BASE + path, {
@@ -105,15 +117,26 @@ export function createGmail(opts: GmailOptions): Gmail {
         continue;
       }
       if (res.ok) {
+        if (paused) {
+          paused = false;
+          opts.onRateLimit?.(null);
+        }
         const text = await res.text();
         return (text ? JSON.parse(text) : undefined) as T;
       }
       const err = await toGmailError(res);
       const rateLimited = isRateLimit(err);
       if (!rateLimited && !(err.status >= 500 && attempt < 5)) throw err;
-      const wait = backoff(attempt);
-      if (rateLimited) opts.onRateLimit?.(wait);
-      await sleep(wait);
+      if (rateLimited) {
+        const until = now() + backoff(attempt);
+        if (until > pausedUntil) {
+          pausedUntil = until;
+          paused = true;
+          opts.onRateLimit?.(until);
+        }
+        continue;
+      }
+      await sleep(backoff(attempt));
     }
   }
 
