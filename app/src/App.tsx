@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { type SecretsStatus, secretsStatus } from "./bridge/tauri.ts";
 import { Button } from "./components/Button.tsx";
-import { Header } from "./components/Header.tsx";
+import { Header, type NavTarget } from "./components/Header.tsx";
+import { StepNav } from "./components/StepNav.tsx";
 import { Review } from "./screens/Review.tsx";
 import { Rules } from "./screens/Rules.tsx";
 import { Scan } from "./screens/Scan.tsx";
@@ -117,6 +118,9 @@ function Shell({ services }: { services: Services }) {
         {screen === "scan" && <Scan services={services} go={go} openWizard={openWizard} />}
         {screen === "review" && <Review services={services} go={go} />}
       </main>
+      {(screen === "rules" || screen === "scan" || screen === "review") && hasCredentials(status) && (
+        <StepNav screen={screen as NavTarget} onNavigate={(target) => go(target)} />
+      )}
     </div>
   );
 }

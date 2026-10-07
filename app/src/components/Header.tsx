@@ -7,7 +7,7 @@ const ACTIVE = new Set(["finding", "judging", "labeling"]);
 
 export type NavTarget = "rules" | "scan" | "review";
 
-const NAV: { id: NavTarget; label: string }[] = [
+export const STAGES: { id: NavTarget; label: string }[] = [
   { id: "rules", label: "Rules" },
   { id: "scan", label: "Scan" },
   { id: "review", label: "Results" },
@@ -49,18 +49,23 @@ export function Header({ progress, email, screen, onNavigate, onSettings }: Prop
         <span className={styles.title}>Purge Email</span>
       )}
       {onNavigate && (
-        <nav className={styles.nav} aria-label="Main">
-          {NAV.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={[styles.tab, screen === item.id && styles.current].filter(Boolean).join(" ")}
-              aria-current={screen === item.id ? "page" : undefined}
-              onClick={() => onNavigate(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
+        <nav aria-label="Stages">
+          <ol className={styles.nav}>
+            {STAGES.map((item, i) => (
+              <li key={item.id} className={styles.step}>
+                {i > 0 && <span className={styles.sep} aria-hidden="true">›</span>}
+                <button
+                  type="button"
+                  className={[styles.tab, screen === item.id && styles.current].filter(Boolean).join(" ")}
+                  aria-current={screen === item.id ? "step" : undefined}
+                  onClick={() => onNavigate(item.id)}
+                >
+                  <span className={styles.num}>{i + 1}</span>
+                  {item.label}
+                </button>
+              </li>
+            ))}
+          </ol>
         </nav>
       )}
       {active && (
