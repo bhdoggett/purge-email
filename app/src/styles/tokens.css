@@ -1,0 +1,80 @@
+/*
+ * Design plan: Purge Email
+ *
+ * Intent: a careful desktop utility. The person is handing over an inbox, so the
+ * interface should feel like a well-kept ledger or archive room, not a toy.
+ *
+ * Palette (light / dark):
+ *   Paper    #F3F5F6 / #14181B  cool grey ground, deliberately not cream
+ *   Surface  #FFFFFF / #1C2226  raised panels
+ *   Ink      #172026 / #E6EBED  text
+ *   Harbour  #1F5F6B / #5FB3C1  accent: deep teal-blue, calm and institutional
+ *   Signals  purge #B4452F (brick), keep #2F7A55 (moss), review #A8761B (ochre)
+ *            Decisions are read by color AND a text label, never color alone.
+ *
+ * Type: Source Serif 4 for display (headings, big counts: editorial, trustworthy),
+ *       IBM Plex Sans for body and data (clear at small sizes, tabular figures).
+ *       Both bundled locally via @fontsource; no network font loading.
+ *
+ * Layout: single centered column, ~720px reading width, left-aligned text.
+ *   One screen per stage (connect, rules, scan, review). Dense lists use
+ *   hairline borders for structure; primary action sits bottom-right.
+ *
+ * Principles: say what will happen before it happens; destructive-looking
+ *   actions are never the most prominent color on screen until confirmed;
+ *   motion only answers the person's action; one memorable element is the
+ *   serif count of emails, everything else stays quiet.
+ */
+@import "@fontsource/source-serif-4/500.css";
+@import "@fontsource/source-serif-4/600.css";
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+
+:root {
+  --color-bg: #f3f5f6;
+  --color-surface: #ffffff;
+  --color-text: #172026;
+  --color-muted: #566670;
+  --color-border: #d3dadd;
+  --color-accent: #1f5f6b;
+  --color-accent-text: #ffffff;
+  --color-purge: #b4452f;
+  --color-keep: #2f7a55;
+  --color-review: #8f6112;
+  --color-danger: #a8321f;
+  --color-focus: #2a7f8f;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Source Serif 4", Georgia, "Times New Roman", serif;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.5rem;
+  --text-2xl: 2.25rem;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 40px;
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --duration: 160ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #14181b;
+    --color-surface: #1c2226;
+    --color-text: #e6ebed;
+    --color-muted: #9aa8b0;
+    --color-border: #2f3a40;
+    --color-accent: #5fb3c1;
+    --color-accent-text: #0e1417;
+    --color-purge: #e0806a;
+    --color-keep: #6cc095;
+    --color-review: #d8a84a;
+    --color-danger: #ee8a76;
+    --color-focus: #7cc6d3;
+  }
+}
