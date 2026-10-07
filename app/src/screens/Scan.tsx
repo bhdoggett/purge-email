@@ -66,7 +66,7 @@ export function Scan({ services, go, openWizard }: { services: Services; go: (s:
               </dl>
             )}
             <div className={styles.actions}>
-              <Button onClick={() => go("review")}>See results</Button>
+              <Button onClick={() => go("review")}>Review results</Button>
               <Button variant="secondary" onClick={() => go("rules")}>New scan</Button>
             </div>
           </>

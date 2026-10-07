@@ -4,6 +4,7 @@ import { Button } from "./components/Button.tsx";
 import { Header, type NavTarget } from "./components/Header.tsx";
 import { type StageAvailability, stageAvailability } from "./stages.ts";
 import { StepNav } from "./components/StepNav.tsx";
+import { Apply } from "./screens/Apply.tsx";
 import { Review } from "./screens/Review.tsx";
 import { Rules } from "./screens/Rules.tsx";
 import { Scan } from "./screens/Scan.tsx";
@@ -15,7 +16,7 @@ import { useProgress } from "./useProgress.ts";
 import type { Step } from "./wizard/steps.ts";
 import styles from "./App.module.css";
 
-export type Screen = "welcome" | "wizard" | "rules" | "scan" | "review" | "settings";
+export type Screen = "welcome" | "wizard" | "rules" | "scan" | "review" | "apply" | "settings";
 
 /** Where to open the wizard and what to do once sign-in succeeds. */
 export interface WizardTarget {
@@ -51,14 +52,14 @@ function Shell({ services }: { services: Services }) {
   const [wizardTarget, setWizardTarget] = useState<WizardTarget>({});
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
-  const [available, setAvailable] = useState<StageAvailability>({ rules: true, scan: false, review: false });
+  const [available, setAvailable] = useState<StageAvailability>({ rules: true, scan: false, review: false, apply: false });
 
-  // Scan is reachable when this session has scan progress; Results when the latest scan finished.
+  // Scan is reachable when this session has scan progress; Review and Apply when the latest scan finished.
   // Re-checked on every screen change and scan stage change (e.g. after Clear scan data).
   useEffect(() => {
     void services.store.getScan().then(
       (scan) => setAvailable(stageAvailability(scan, services.engine.isBusy(), progress.stage)),
-      () => setAvailable({ rules: true, scan: services.engine.isBusy(), review: false }),
+      () => setAvailable({ rules: true, scan: services.engine.isBusy(), review: false, apply: false }),
     );
   }, [services, screen, progress.stage]);
 
@@ -128,9 +129,10 @@ function Shell({ services }: { services: Services }) {
         )}
         {screen === "rules" && <Rules services={services} go={go} />}
         {screen === "scan" && <Scan services={services} go={go} openWizard={openWizard} />}
-        {screen === "review" && <Review services={services} go={go} />}
+        {screen === "review" && <Review services={services} go={go} onNext={() => go("apply")} />}
+        {screen === "apply" && <Apply services={services} go={go} />}
       </main>
-      {(screen === "rules" || screen === "scan" || screen === "review") && hasCredentials(status) && (
+      {(screen === "rules" || screen === "scan" || screen === "review" || screen === "apply") && hasCredentials(status) && (
         <StepNav screen={screen as NavTarget} onNavigate={(target) => go(target)} available={available} />
       )}
     </div>

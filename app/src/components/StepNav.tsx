@@ -2,7 +2,7 @@ import { type NavTarget, STAGES } from "./Header.tsx";
 import { UNAVAILABLE_HINT } from "../stages.ts";
 import styles from "./StepNav.module.css";
 
-/** Back and Next buttons that move between the Rules, Scan, and Results stages. */
+/** Back and Next buttons that move between the Rules, Scan, Review, and Apply stages. */
 export function StepNav({
   screen,
   onNavigate,

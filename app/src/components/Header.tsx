@@ -6,12 +6,13 @@ import styles from "./Header.module.css";
 
 const ACTIVE = new Set(["finding", "judging"]);
 
-export type NavTarget = "rules" | "scan" | "review";
+export type NavTarget = "rules" | "scan" | "review" | "apply";
 
 export const STAGES: { id: NavTarget; label: string }[] = [
   { id: "rules", label: "Rules" },
   { id: "scan", label: "Scan" },
-  { id: "review", label: "Results" },
+  { id: "review", label: "Review" },
+  { id: "apply", label: "Apply" },
 ];
 
 interface Props {
