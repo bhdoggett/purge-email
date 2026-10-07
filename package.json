@@ -5,7 +5,10 @@
     "plan": "tsx --env-file-if-exists=.env src/cli.ts plan",
     "apply": "tsx --env-file-if-exists=.env src/cli.ts apply",
     "spam": "tsx --env-file-if-exists=.env src/cli.ts spam",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "app": "npm --prefix app run tauri dev",
+    "app:build": "npm --prefix app run tauri build",
+    "app:test": "npm --prefix app test"
   },
   "type": "module",
   "dependencies": {
