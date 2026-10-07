@@ -3,6 +3,7 @@ import { proxyFetch } from "./bridge/proxyFetch.ts";
 import { createGmail, type Gmail } from "./gmail/client.ts";
 import { createJudge } from "./jev/client.ts";
 import { rateLimit } from "./rateLimit.ts";
+import { ApplyRunner } from "./scan/applyRunner.ts";
 import { ScanEngine } from "./scan/engine.ts";
 import { DEFAULT_SETTINGS } from "@core/decide.ts";
 import { openStore, type Store } from "./storage/db.ts";
@@ -13,6 +14,7 @@ export interface Services {
   store: Store;
   gmail: Gmail;
   engine: ScanEngine;
+  applier: ApplyRunner;
 }
 
 /** Best effort: a notification that can't be shown is not worth an error. */
@@ -32,8 +34,10 @@ export function getServices(): Promise<Services> {
   services ??= (async () => {
     const store = await openStore(undefined, { ...DEFAULT_SETTINGS, labelPrefix: DEFAULT_PREFIX });
     const gmail = createGmail({ fetch: proxyFetch, onRateLimit: (until) => rateLimit.set(until) });
-    const engine = new ScanEngine({ gmail, judge: createJudge(), store, notify: (t, b) => void notify(t, b) });
-    return { store, gmail, engine };
+    // Each checks the other before it starts: a scan and an Apply never run together.
+    const applier: ApplyRunner = new ApplyRunner({ gmail, store, isScanning: () => engine.isBusy() });
+    const engine: ScanEngine = new ScanEngine({ gmail, judge: createJudge(), store, notify: (t, b) => void notify(t, b), isBlocked: () => applier.busy() });
+    return { store, gmail, engine, applier };
   })();
   services.catch(() => {
     services = null;

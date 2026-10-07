@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { applyPercent, useApplyProgress } from "../applyProgress.ts";
 import type { Progress } from "../scan/progress.ts";
 import { currentTheme, otherTheme, setTheme } from "../theme.ts";
 import { UNAVAILABLE_HINT } from "../stages.ts";
@@ -26,11 +25,12 @@ interface Props {
   onSettings: () => void;
   /** Stages that can be opened; others are shown greyed out. */
   available: Record<NavTarget, boolean>;
+  /** Set while labels are being written to Gmail. */
+  applying: { done: number; total: number } | null;
 }
 
-export function Header({ progress, email, screen, onNavigate, onSettings, available }: Props) {
+export function Header({ progress, email, screen, onNavigate, onSettings, available, applying }: Props) {
   const active = ACTIVE.has(progress.stage);
-  const applying = useApplyProgress();
   const [theme, setThemeState] = useState(currentTheme);
   // With no stored choice the theme follows the system, so keep the toggle's label in step with it.
   useEffect(() => {
@@ -83,7 +83,7 @@ export function Header({ progress, email, screen, onNavigate, onSettings, availa
       )}
       {applying && (
         <span className={styles.status} aria-live="polite">
-          Applying {applyPercent(applying)}%
+          Applying {applying.total ? Math.round((applying.done / applying.total) * 100) : 0}%
         </span>
       )}
       <span className={styles.spacer} />

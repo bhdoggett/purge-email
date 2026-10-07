@@ -11,6 +11,7 @@ import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
 import { prefixInUseByUser } from "../scan/reconcile.ts";
 import type { ScanRecord } from "../storage/db.ts";
 import type { Services } from "../services.ts";
+import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
 import { useProgress } from "../useProgress.ts";
 import type { Screen } from "../App.tsx";
 import styles from "./Rules.module.css";
@@ -24,6 +25,7 @@ const STRICTNESS_COPY: { id: Strictness; label: string; description: string }[] 
 export function Rules({ services, go }: { services: Services; go: (s: Screen) => void }) {
   const progress = useProgress(services.engine);
   const busy = services.engine.isBusy();
+  const applying = isApplying(useApplier(services.applier));
   const [settings, setSettings] = useState<Settings | null>(null);
   const [scan, setScan] = useState<ScanRecord | null>(null);
   const [est, setEst] = useState<Awaited<ReturnType<typeof estimate>> | null>(null);
@@ -183,7 +185,8 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
               ? `${est.count.toLocaleString()} emails · about ${formatUsd(est.costUsd)} · about ${formatDuration(est.ms)}`
               : "Counting emails…"}
         </p>
-        <Button disabled={busy || est?.count === 0 || prefixError !== null} onClick={startScan}>
+        {applying && <p className={styles.note}>{APPLYING_HINT}</p>}
+        <Button disabled={busy || applying || est?.count === 0 || prefixError !== null} onClick={startScan}>
           {resumable ? "Resume scan" : "Start scan"}
         </Button>
       </div>

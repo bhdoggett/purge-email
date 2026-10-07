@@ -5,14 +5,17 @@ import { useRateLimit } from "../rateLimit.ts";
 export function RateLimitNote({ className }: { className?: string }) {
   const until = useRateLimit();
   const [now, setNow] = useState(Date.now());
-  const active = until !== null;
   useEffect(() => {
-    if (!active) return;
+    if (until === null || until <= Date.now()) return;
     setNow(Date.now());
-    // Tick faster than once a second so the countdown never skips or lingers on a second.
-    const t = setInterval(() => setNow(Date.now()), 250);
+    // Tick faster than once a second so the countdown never skips or lingers on a second; stop once the pause is over.
+    const t = setInterval(() => {
+      const n = Date.now();
+      setNow(n);
+      if (n >= until) clearInterval(t);
+    }, 250);
     return () => clearInterval(t);
-  }, [active]);
+  }, [until]);
   if (until === null || until <= now) return null;
   return (
     <p className={className} role="status">

@@ -325,7 +325,6 @@ export async function applyPreview(
   }
   await store.putLabels(plan.put);
   await store.deleteLabels(plan.del);
-  // The last batch already reported the total.
   // settingsAtScan records which rules the scan's candidate list covers, so only a finished scan sets it.
 }
 

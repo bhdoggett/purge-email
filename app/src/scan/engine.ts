@@ -17,6 +17,8 @@ export interface EngineDeps {
   concurrency?: number;
   now?: () => number;
   notify?: (title: string, body: string) => void;
+  /** True while something else (writing labels) must finish before a scan starts. */
+  isBlocked?: () => boolean;
 }
 
 const MAX_CONSECUTIVE_FAILURES = 20;
@@ -96,7 +98,7 @@ export class ScanEngine {
   }
 
   async start(settingsIn: Settings, opts: { limit?: number } = {}): Promise<void> {
-    if (this.busy) return;
+    if (this.busy || this.deps.isBlocked?.()) return;
     this.busy = true;
     this.stopRequested = false;
     // Snapshot so edits made while the scan runs don't affect it.

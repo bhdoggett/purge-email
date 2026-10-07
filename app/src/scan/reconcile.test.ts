@@ -836,4 +836,16 @@ describe("progress reporting", () => {
     expect(calls[0]).toEqual([0, 0]);
     expect(calls.at(-1)).toEqual([0, 0]);
   });
+
+  it("counts a removal on a label the user deleted as one step, with no Gmail call", async () => {
+    const { store, gmail } = await arrange(["a"]);
+    const preview = await previewReconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);
+    // A label Gmail no longer has is absent from preview.gmail.labelIds: its removal is already done.
+    preview.plan.remove.set("gone/label", ["a"]);
+    const removeLabel = vi.spyOn(gmail, "removeLabel");
+    const calls: [number, number][] = [];
+    await applyPreview({ gmail, store }, preview, { onProgress: (d, t) => calls.push([d, t]) });
+    expect(removeLabel).not.toHaveBeenCalled();
+    expect(calls.at(-1)).toEqual([2, 2]);
+  });
 });

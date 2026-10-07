@@ -16,17 +16,18 @@ describe("rate-limit store", () => {
     expect(fn).toHaveBeenCalledTimes(1);
   });
 
-  it("is cleared when the Gmail client reports onRateLimit(null)", async () => {
+  it("follows the Gmail client: set on a 429, cleared by onRateLimit(null)", async () => {
     const { rateLimit } = await import("./rateLimit.ts");
     const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
     const limited = () => json(429, { error: { code: 429, message: "Quota", errors: [{ reason: "rateLimitExceeded" }] } });
     const seen: (number | null)[] = [];
-    rateLimit.subscribe(() => seen.push(rateLimit.get()));
+    const off = rateLimit.subscribe(() => seen.push(rateLimit.get()));
     const fetch = vi.fn().mockResolvedValueOnce(limited()).mockResolvedValue(json(200, { emailAddress: "a" }));
     let t = 0;
     const gmail = createGmail({ fetch, sleep: async (ms) => void (t += ms), now: () => t, onRateLimit: (u) => rateLimit.set(u), random: () => 0.5 });
     await gmail.getProfile();
     expect(seen[0]).toBeTypeOf("number");
     expect(rateLimit.get()).toBeNull();
+    off();
   });
 });

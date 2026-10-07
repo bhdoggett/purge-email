@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
 import type { Answers } from "@core/questions.ts";
 import { PURGE_KINDS } from "@core/questions.ts";
 import type { Settings } from "@core/decide.ts";
@@ -63,6 +64,7 @@ function typingInField(target: EventTarget | null): boolean {
 
 export function Review({ services, go, onNext }: { services: Services; go: (s: Screen) => void; onNext: () => void }) {
   const { store, engine } = services;
+  const applying = isApplying(useApplier(services.applier));
   const [data, setData] = useState<Loaded | null>(null);
   const [overrides, setOverrides] = useState<Map<string, Override>>(new Map());
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -211,7 +213,7 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
       <section className={styles.review}>
         <h1 className={styles.heading}>Rescan needed</h1>
         <p className={styles.lede}>You lowered the age or turned off a protection under "Always keep", so some emails were never scanned. Only a new scan finds them.</p>
-        <Button onClick={rescan}>Rescan</Button>
+        <Button disabled={applying} title={applying ? APPLYING_HINT : undefined} onClick={rescan}>Rescan</Button>
         {error && <p className={styles.error} role="alert">{error}</p>}
       </section>
     );

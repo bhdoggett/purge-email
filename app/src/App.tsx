@@ -12,6 +12,7 @@ import { Settings } from "./screens/Settings.tsx";
 import { Welcome } from "./screens/Welcome.tsx";
 import { Wizard } from "./screens/Wizard.tsx";
 import { getServices, type Services } from "./services.ts";
+import { useApplier } from "./useApplier.ts";
 import { useProgress } from "./useProgress.ts";
 import type { Step } from "./wizard/steps.ts";
 import styles from "./App.module.css";
@@ -46,6 +47,7 @@ function StartupError({ message, onRetry }: { message: string; onRetry: () => vo
 
 function Shell({ services }: { services: Services }) {
   const progress = useProgress(services.engine);
+  const applyState = useApplier(services.applier);
   const [status, setStatus] = useState<SecretsStatus | null>(null);
   const [screen, setScreen] = useState<Screen | null>(null);
   const [previous, setPrevious] = useState<Screen>("rules");
@@ -119,6 +121,7 @@ function Shell({ services }: { services: Services }) {
         screen={screen}
         onNavigate={hasCredentials(status) ? (target) => go(target) : null}
         available={available}
+        applying={applyState.phase === "writing" ? { done: applyState.done ?? 0, total: applyState.total ?? 0 } : null}
         onSettings={() => go("settings")}
       />
       <main className={styles.main}>

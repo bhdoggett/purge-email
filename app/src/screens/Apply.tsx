@@ -3,81 +3,61 @@ import { useEffect, useRef, useState } from "react";
 import type { Settings } from "@core/decide.ts";
 import { needsRescan } from "@core/labels.ts";
 import type { Screen } from "../App.tsx";
-import { applyProgress, useApplyProgress } from "../applyProgress.ts";
 import { Button } from "../components/Button.tsx";
 import { ProgressBar } from "../components/ProgressBar.tsx";
 import { RateLimitNote } from "../components/RateLimitNote.tsx";
 import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
-import { applyPreview, countByLabel, isPending, type Preview, previewReconcile, type ReadStep } from "../scan/reconcile.ts";
+import { isPending, type ReadStep } from "../scan/reconcile.ts";
 import type { Services } from "../services.ts";
-import { appliedMessage, type ApplyRow, buildRows, gmailLabelUrl, previewSummary, SETTLING_NOTE, totalOf } from "./applyModel.ts";
+import { buildRows, gmailLabelUrl, previewSummary, SETTLING_NOTE, totalOf } from "./applyModel.ts";
+import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
 import { useProgress } from "../useProgress.ts";
 import styles from "./Apply.module.css";
 
-type Loaded =
-  | { kind: "noscan" }
-  | { kind: "rescan"; settings: Settings }
-  | { kind: "pending"; settings: Settings; preview: Preview }
-  | { kind: "done"; settings: Settings; rows: ApplyRow[]; deferred: number };
+type Gate = { kind: "noscan" } | { kind: "rescan"; settings: Settings } | { kind: "ready"; settings: Settings };
 
 /** "Checking Gmail: label 3 of 9 (promotion)…" with just the slug of the label's name. */
-function stepText(step: ReadStep | null): string {
+function stepText(step: ReadStep | undefined): string {
   if (!step) return "Checking Gmail…";
   return `Checking Gmail: label ${step.index} of ${step.total} (${step.label.slice(step.label.lastIndexOf("/") + 1)})…`;
 }
 
-function errorText(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
-}
-
 export function Apply({ services, go }: { services: Services; go: (s: Screen) => void }) {
-  const { store, gmail, engine } = services;
-  const [data, setData] = useState<Loaded | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [applying, setApplying] = useState(false);
-  // The label Gmail is being read for right now, while checking.
-  const [step, setStep] = useState<ReadStep | null>(null);
-  const writing = useApplyProgress();
+  const { store, engine, applier } = services;
+  const [gate, setGate] = useState<Gate | null>(null);
+  const [gateError, setGateError] = useState<string | null>(null);
+  // The job lives in the runner, so leaving this screen and coming back shows where it is.
+  const state = useApplier(applier);
+  const working = isApplying(state);
   // Re-render when a scan starts or stops, so the buttons stay current.
   const progress = useProgress(engine);
   const scanning = engine.isBusy();
   const wasScanning = useRef(scanning);
   useEffect(() => {
     // A scan that just finished changed the candidates: check Gmail again.
-    if (wasScanning.current && !scanning) void load();
+    if (wasScanning.current && !scanning) void load(true);
     wasScanning.current = scanning;
   }, [scanning, progress.stage]);
 
-  async function load() {
+  async function load(force = false) {
     try {
       const settings = await store.getSettings();
       const scan = await store.getScan();
       // Without a finished scan there are no candidates, so a preview would strip every label.
       if (!scan?.finished || !scan.settingsAtScan) {
-        setData({ kind: "noscan" });
+        setGate({ kind: "noscan" });
       } else if (needsRescan(scan.settingsAtScan, settings)) {
-        setData({ kind: "rescan", settings });
+        setGate({ kind: "rescan", settings });
       } else {
-        setData(null);
-        const preview = await previewReconcile({ gmail, store }, settings, { onStep: setStep });
-        if (isPending(preview)) {
-          setData({ kind: "pending", settings, preview });
-        } else {
-          // Nothing to change in Gmail, but the plan may still stamp records (e.g. an override already in effect).
-          // Save those now: applyPreview makes no Gmail calls when there is nothing to add or remove.
-          if ((preview.plan.put.length > 0 || preview.plan.del.length > 0) && !engine.isBusy()) {
-            await applyPreview({ gmail, store }, preview);
-          }
-          const rows = buildRows(await countByLabel(gmail, settings), settings.labelPrefix);
-          setData({ kind: "done", settings, rows, deferred: preview.plan.deferred });
-        }
+        setGate({ kind: "ready", settings });
+        const current = applier.getState();
+        // A finished result with its message is shown as it is; a running job is never disturbed.
+        const showResult = current.phase === "done" && current.message !== undefined && !force;
+        if (!applier.busy() && !showResult) void applier.check(settings);
       }
-      setError(null);
+      setGateError(null);
     } catch (e) {
-      setError(`Could not check Gmail. ${errorText(e)}`);
-    } finally {
-      setStep(null);
+      setGateError(`Could not check Gmail. ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -85,83 +65,45 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
     void load();
   }, []);
 
-  async function apply() {
-    if (!data || data.kind !== "pending" || applying) return;
-    if (engine.isBusy()) {
-      setMessage(null);
-      setError("A scan is running. Apply after it finishes.");
-      return;
-    }
-    setApplying(true);
-    setMessage(null);
-    setError(null);
-    try {
-      // The shown plan was stamped when the screen opened: plan again so the records carry the time of this Apply.
-      const fresh = await previewReconcile({ gmail, store }, data.settings, { onStep: setStep });
-      setStep(null);
-      if (!isPending(fresh)) {
-        await load();
-        return;
-      }
-      if (fresh.added !== data.preview.added || fresh.moved !== data.preview.moved || fresh.removed !== data.preview.removed) {
-        setData({ ...data, preview: fresh });
-        setMessage("Gmail changed since this screen opened. Check the new numbers, then apply.");
-        return;
-      }
-      try {
-        await applyPreview({ gmail, store }, fresh, { onProgress: (done, total) => applyProgress.set({ done, total }) });
-      } finally {
-        applyProgress.set(null);
-      }
-      setMessage(appliedMessage(fresh, fresh.oldPrefixes));
-      await load();
-    } catch (e) {
-      setError(`Could not apply the labels. ${errorText(e)}`);
-    } finally {
-      setStep(null);
-      setApplying(false);
-    }
+  function apply() {
+    if (gate?.kind !== "ready" || state.phase !== "done" || !state.preview || working) return;
+    void applier.apply(gate.settings, state.preview);
   }
 
   function rescan() {
-    if (!data || data.kind !== "rescan") return;
-    if (engine.isBusy()) {
-      setMessage(null);
-      setError("Another job is running. Wait for it to finish.");
-      return;
-    }
-    void engine.start(data.settings, { limit: DEV_SCAN_LIMIT });
+    if (gate?.kind !== "rescan" || working) return;
+    if (engine.isBusy()) return;
+    void engine.start(gate.settings, { limit: DEV_SCAN_LIMIT });
     go("scan");
   }
 
-  if (writing) {
+  if (state.phase === "writing") {
+    const done = state.done ?? 0;
+    const total = state.total ?? 0;
     return (
       <section className={styles.review}>
         <h1 className={styles.heading} aria-live="polite">Applying labels</h1>
-        <ProgressBar value={writing.total ? writing.done / writing.total : 0} label="Apply progress" />
+        <ProgressBar value={total ? done / total : 0} label="Apply progress" />
         <p className={styles.muted}>
-          Labeling {writing.done.toLocaleString()} of {writing.total.toLocaleString()}
+          Labeling {done.toLocaleString()} of {total.toLocaleString()}
         </p>
         <RateLimitNote className={styles.muted} />
       </section>
     );
   }
 
-  if (!data) {
-    return error ? (
+  if (!gate) {
+    return gateError ? (
       <section className={styles.review}>
-        <p className={styles.error} role="alert">{error}</p>
+        <p className={styles.error} role="alert">{gateError}</p>
         <Button onClick={() => void load()}>Try again</Button>
       </section>
     ) : (
-      <section className={styles.review}>
-        <p className={styles.loading}>{stepText(step)}</p>
-        <RateLimitNote className={styles.muted} />
-      </section>
+      <p className={styles.loading}>Checking Gmail…</p>
     );
   }
 
-  if (data.kind === "noscan") {
+  if (gate.kind === "noscan") {
     return (
       <section className={styles.review}>
         <h1 className={styles.heading}>No scan yet</h1>
@@ -171,20 +113,39 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
     );
   }
 
-  if (data.kind === "rescan") {
+  if (gate.kind === "rescan") {
     return (
       <section className={styles.review}>
         <h1 className={styles.heading}>Rescan needed</h1>
         <p className={styles.lede}>You lowered the age or turned off a protection under "Always keep", so some emails were never scanned. Only a new scan finds them.</p>
-        <Button disabled={scanning} onClick={rescan}>Rescan</Button>
-        {error && <p className={styles.error} role="alert">{error}</p>}
+        <Button disabled={scanning || working} title={working ? APPLYING_HINT : undefined} onClick={rescan}>Rescan</Button>
+        {state.error && <p className={styles.error} role="alert">{state.error}</p>}
       </section>
     );
   }
 
-  if (data.kind === "pending") {
-    const { preview } = data;
-    const rows = buildRows(preview.totals, data.settings.labelPrefix);
+  if (state.phase === "checking" || state.phase === "idle") {
+    return (
+      <section className={styles.review}>
+        <p className={styles.loading}>{stepText(state.step)}</p>
+        <RateLimitNote className={styles.muted} />
+      </section>
+    );
+  }
+
+  if (state.phase === "error") {
+    return (
+      <section className={styles.review}>
+        <p className={styles.error} role="alert">{state.error}</p>
+        <Button onClick={() => void applier.check(gate.settings)}>Try again</Button>
+      </section>
+    );
+  }
+
+  const { message, error } = state;
+  const preview = state.preview;
+  if (preview && isPending(preview)) {
+    const rows = buildRows(preview.totals, gate.settings.labelPrefix);
     return (
       <section className={styles.review}>
         <h1 className={styles.heading}>Ready to label</h1>
@@ -204,23 +165,21 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         )}
         {preview.plan.deferred > 0 && <p className={styles.muted}>{SETTLING_NOTE}</p>}
         <div className={styles.actions}>
-          <Button disabled={applying || scanning} onClick={() => void apply()}>
-            {applying ? "Applying labels…" : "Apply labels"}
-          </Button>
+          <Button disabled={scanning} onClick={apply}>Apply labels</Button>
         </div>
-        {applying && <p className={styles.muted}>{stepText(step)}</p>}
-        <RateLimitNote className={styles.muted} />
         {message && <p role="status">{message}</p>}
         {error && <p className={styles.error} role="alert">{error}</p>}
       </section>
     );
   }
 
-  const { settings, rows } = data;
+  const settings = gate.settings;
+  const rows = buildRows(state.counts ?? new Map(), settings.labelPrefix);
+  const deferred = preview?.plan.deferred ?? 0;
   if (totalOf(rows) === 0) {
     return (
       <section className={styles.review}>
-        {data.deferred > 0 ? (
+        {deferred > 0 ? (
           <>
             <h1 className={styles.heading}>Labels are still settling</h1>
             <p className={styles.lede}>{SETTLING_NOTE}</p>
@@ -246,7 +205,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         enough: selecting all and deleting in Gmail deletes everything under the label, starred mail included. Jev left the rest unlabeled.
       </p>
       {message && <p role="status">{message}</p>}
-      {data.deferred > 0 && <p className={styles.muted}>{SETTLING_NOTE}</p>}
+      {deferred > 0 && <p className={styles.muted}>{SETTLING_NOTE}</p>}
       {error && <p className={styles.error} role="alert">{error}</p>}
 
       <ul className={styles.rows}>
