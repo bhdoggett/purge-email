@@ -25,6 +25,9 @@ describe("store", () => {
     expect((await store.getSettings()).years).toBe(8);
     expect((await store.getScan())?.candidateIds).toEqual(["m1"]);
     expect(await store.getWizard()).toEqual([1, 2]);
+
+    await store.deleteLabels(["m1"]);
+    expect((await store.allLabels()).size).toBe(0);
   });
 
   it("clearScanData keeps settings and wizard progress", async () => {

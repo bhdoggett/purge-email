@@ -41,6 +41,27 @@ describe("syncLabels", () => {
     expect(labels.get("removed")?.userRemoved).toBe(true);
   });
 
+  it("removes the label from app-labeled emails that are no longer candidates", async () => {
+    const { store, gmail } = await seeded();
+    const scan = (await store.getScan())!;
+    await store.putScan({ ...scan, candidateIds: ["promo"] });
+    const result = await syncLabels({ gmail, store, labelName: "purge-test" }, DEFAULT_SETTINGS);
+    expect(result.removed).toBe(1);
+    expect([...gmail.labeled]).toEqual(["promo"]);
+    expect((await store.allLabels()).has("news")).toBe(false);
+  });
+
+  it("leaves labels on trashed emails that are no longer candidates", async () => {
+    const { store, gmail } = await seeded();
+    gmail.trashed.add("news");
+    const scan = (await store.getScan())!;
+    await store.putScan({ ...scan, candidateIds: ["promo"] });
+    const result = await syncLabels({ gmail, store, labelName: "purge-test" }, DEFAULT_SETTINGS);
+    expect(result.removed).toBe(0);
+    expect(gmail.labeled.has("news")).toBe(true);
+    expect((await store.allLabels()).get("news")?.userRemoved).toBe(false);
+  });
+
   it("adds labels for newly matching emails", async () => {
     const { store, gmail } = await seeded();
     gmail.labeled.clear();

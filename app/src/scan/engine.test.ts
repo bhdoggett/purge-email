@@ -202,4 +202,42 @@ describe("ScanEngine", () => {
     await engine.start(DEFAULT_SETTINGS, { limit: 1 });
     expect((await store.getScan())?.candidateIds).toHaveLength(1);
   });
+
+  it("removes stale labels when a rescan uses rules that no longer purge them", async () => {
+    const { gmail, engine, store } = await setup();
+    await engine.start(DEFAULT_SETTINGS);
+    expect([...gmail.labeled]).toEqual(["promo"]);
+
+    const narrower = { ...DEFAULT_SETTINGS, purgeKinds: DEFAULT_SETTINGS.purgeKinds.filter((k) => k !== "promotion") };
+    await engine.start(narrower);
+    expect(engine.getProgress().stage).toBe("done");
+    expect([...gmail.labeled]).toEqual([]);
+    expect((await store.getScan())?.settingsAtScan).toEqual(narrower);
+    expect((await store.allLabels()).has("promo")).toBe(false);
+
+    // The app removed it, not the user, so going back to the old rules labels it again.
+    await engine.start(DEFAULT_SETTINGS);
+    expect([...gmail.labeled]).toEqual(["promo"]);
+  });
+
+  it("removes the label from an earlier-labeled email that the raised age no longer covers", async () => {
+    const { gmail, engine, store } = await setup([makeSummary("old"), makeSummary("recent")]);
+    gmail.ages.set("old", 15);
+    gmail.ages.set("recent", 6);
+    await engine.start({ ...DEFAULT_SETTINGS, years: 5 });
+    expect([...gmail.labeled].sort()).toEqual(["old", "recent"]);
+
+    await engine.start({ ...DEFAULT_SETTINGS, years: 10 });
+    expect((await store.getScan())?.candidateIds).toEqual(["old"]);
+    expect([...gmail.labeled]).toEqual(["old"]);
+  });
+
+  it("does not re-add a label the user removed between scans", async () => {
+    const { gmail, engine, store } = await setup();
+    await engine.start(DEFAULT_SETTINGS);
+    gmail.labeled.delete("promo");
+    await engine.start(DEFAULT_SETTINGS);
+    expect(gmail.labeled.has("promo")).toBe(false);
+    expect((await store.allLabels()).get("promo")?.userRemoved).toBe(true);
+  });
 });

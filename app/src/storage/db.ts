@@ -37,6 +37,7 @@ export interface Store {
   allAnswers(): Promise<Map<string, Answers>>;
   allLabels(): Promise<Map<string, LabelRecord>>;
   putLabels(recs: LabelRecord[]): Promise<void>;
+  deleteLabels(ids: string[]): Promise<void>;
   getSettings(): Promise<Settings>;
   putSettings(s: Settings): Promise<void>;
   getScan(): Promise<ScanRecord | null>;
@@ -76,6 +77,10 @@ export async function openStore(name = "purge-email"): Promise<Store> {
     async putLabels(recs) {
       const tx = db.transaction("labels", "readwrite");
       await Promise.all([...recs.map((r) => tx.store.put(r)), tx.done]);
+    },
+    async deleteLabels(ids) {
+      const tx = db.transaction("labels", "readwrite");
+      await Promise.all([...ids.map((id) => tx.store.delete(id)), tx.done]);
     },
     getSettings: async () => ((await db.get("kv", "settings")) as Settings | undefined) ?? DEFAULT_SETTINGS,
     putSettings: async (s) => void (await db.put("kv", s, "settings")),

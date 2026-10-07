@@ -23,6 +23,8 @@ export interface FakeGmail extends Gmail {
   expireAfter: number | null;
   spamIds: string[];
   trashErrors: Map<string, Error>;
+  /** Age in years per message, used for `older_than:` queries. Defaults to 20. */
+  ages: Map<string, number>;
 }
 
 /** In-memory Gmail. `labeled` holds IDs carrying the app's label. */
@@ -36,12 +38,16 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
     expireAfter: null,
     spamIds: [],
     trashErrors: new Map(),
+    ages: new Map(),
     async listIds(q, limit = Infinity) {
       let ids: { id: string; threadId: string }[];
       if (q.startsWith("in:sent")) ids = [];
       else if (q === "in:spam") ids = fake.spamIds.map((id) => ({ id, threadId: id }));
       else if (q.startsWith("label:")) ids = [...fake.labeled].filter((id) => (q.includes("in:anywhere") || !fake.trashed.has(id)) && !(q.includes("-is:starred") && byId.get(id)?.labels.includes("STARRED"))).map((id) => ({ id, threadId: id }));
-      else ids = messages.map((m) => ({ id: m.id, threadId: m.threadId }));
+      else {
+        const years = Number(/older_than:(\d+)y/.exec(q)?.[1] ?? 0);
+        ids = messages.filter((m) => (fake.ages.get(m.id) ?? 20) >= years).map((m) => ({ id: m.id, threadId: m.threadId }));
+      }
       return ids.slice(0, limit);
     },
     async getSummary(id) {
