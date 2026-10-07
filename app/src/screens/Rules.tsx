@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { type Settings, type Strictness } from "@core/decide.ts";
-import { candidateQuery, validatePrefix } from "@core/labels.ts";
+import { needsRescan, validatePrefix } from "@core/labels.ts";
 import { PROTECTS, PURGE_KINDS } from "@core/questions.ts";
 import { Button } from "../components/Button.tsx";
 import { Checkbox } from "../components/Checkbox.tsx";
@@ -56,7 +56,7 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
   };
   const toggle = <T,>(list: T[], item: T, on: boolean) => (on ? [...list, item] : list.filter((x) => x !== item));
   // A limited scan always builds a fresh candidate list, so it never resumes.
-  const resumable = !limit && scan && !scan.finished && scan.years === settings.years;
+  const resumable = !limit && !!scan && !scan.finished && !!scan.settings && !needsRescan(scan.settings, settings);
 
   const startScan = () => {
     void services.engine.start(settings, { limit });

@@ -19,3 +19,6 @@
   gap: var(--space-3);
   margin-top: var(--space-5);
 }
+.body {
+  white-space: pre-line;
+}

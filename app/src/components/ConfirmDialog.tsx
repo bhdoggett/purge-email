@@ -20,7 +20,7 @@ export function ConfirmDialog({ open, title, body, confirmLabel, onConfirm, onCa
   return (
     <dialog ref={ref} className={styles.dialog} onCancel={onCancel}>
       <h2 className={styles.title}>{title}</h2>
-      <p>{body}</p>
+      <p className={styles.body}>{body}</p>
       <div className={styles.actions}>
         <Button variant="secondary" onClick={onCancel}>Cancel</Button>
         <Button variant="danger" onClick={onConfirm}>{confirmLabel}</Button>

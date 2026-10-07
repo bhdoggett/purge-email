@@ -12,7 +12,6 @@ export interface Services {
   store: Store;
   gmail: Gmail;
   engine: ScanEngine;
-  labelName: string;
 }
 
 /** Best effort: a notification that can't be shown is not worth an error. */
@@ -34,7 +33,7 @@ export function getServices(): Promise<Services> {
     let engine: ScanEngine | undefined;
     const gmail = createGmail({ fetch: proxyFetch, onRateLimit: (ms) => engine?.noteRateLimit(ms) });
     engine = new ScanEngine({ gmail, judge: createJudge(), store, notify: (t, b) => void notify(t, b) });
-    return { store, gmail, engine, labelName: DEFAULT_PREFIX };
+    return { store, gmail, engine };
   })();
   services.catch(() => {
     services = null;

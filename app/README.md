@@ -2,7 +2,7 @@
 
 A desktop app (built with Tauri 2 and React) that helps you clean out old Gmail messages. The app uses Google's OAuth to access your Gmail account and the Jev AI model to judge whether messages are worth keeping.
 
-Like the CLI, the app doesn't delete anything at first. Instead, it adds a Gmail label (named `purge` by default) to messages it thinks should go. You can review them in Gmail before applying the delete.
+Like the CLI, the app doesn't delete anything at first. Instead, it adds Gmail labels to messages it thinks should go, one sub-label per kind of mail (for example `purge/newsletter` and `purge/promotion`), plus `purge/maybe` for mail Jev wasn't sure about. You can review them in Gmail before applying the delete.
 
 ## Setup and Development
 
@@ -44,10 +44,10 @@ When you first run the app, a 6-step setup wizard walks you through the process:
 
 ### Development vs. Release Labels
 
-- **Development mode** (when running `npm run tauri dev`): uses the `VITE_PURGE_LABEL` variable from `app/.env.development`, which defaults to `purge-test`
-- **Release builds**: falls back to `purge` when the variable is not set
+- **Development mode** (when running `npm run tauri dev`): the label name starts as the `VITE_PURGE_LABEL` variable from `app/.env.development`, which defaults to `purge-test`
+- **Release builds**: the label name starts as `purge` when the variable is not set
 
-This keeps development scans separate from production.
+This keeps development scans separate from production. You can change the label name on the Rules screen (1 to 40 letters, numbers, spaces, `-` or `_`; no `/`).
 
 ## Testing
 
@@ -88,11 +88,11 @@ See "Setup Wizard" above for the 6-step process that configures your Jev key, Go
 
 ### Rules
 
-Configure which kinds of messages Jev should consider for deletion (newsletters, promotions, social media, etc.) and which kinds to always keep (personal correspondence, receipts, account records, etc.). Choose a strictness level (Careful, Balanced, or Aggressive) and set the age threshold (default: 10 years, meaning older emails are candidates for deletion). In development builds only, you can set a scan limit to test with fewer emails (appears as "Limit (dev)" field).
+Choose which kinds of messages Jev should label for purging (newsletters, promotions, social, security alerts, shipping, scams, work, automated) and which to always keep (personal correspondence, receipts, account records, etc.). Two more checkboxes under "Always keep" protect emails with attachments and starred emails; both are on by default. Choose a strictness level (Careful, Balanced, or Aggressive), set the age threshold (default: 10 years), and pick the label name. Labels look like `purge/newsletter`, with `purge/maybe` for mail Jev wasn't sure about. In development builds only, you can set a scan limit (the "Limit (dev)" field).
 
 ### Scan
 
-The app searches Gmail for emails older than your configured age (excluding attachments and starred messages). For each email, it sends the following to the Jev AI model to judge whether it's worth keeping:
+The app searches Gmail for emails older than your configured age (skipping spam, trash, chats, and, when those checkboxes are on, emails with attachments and starred emails). For each email, it sends the following to the Jev AI model to judge whether it's worth keeping:
 - Sender (from), recipients (to, cc)
 - Subject, date, and snippet
 - Whether you've replied in the thread
@@ -103,18 +103,13 @@ Email bodies and attachments are never sent to Jev. The scan runs in the backgro
 
 ### Review
 
-After a scan completes, you'll see a summary of emails Jev labeled for purging, plus how many it marked to keep and how many it wasn't sure about.
+After a scan, Review shows one row per label that has email in it, with the count. Each row has **Open in Gmail** and **Move N to Trash**. The `maybe` row carries a note to look through it before deleting. **Move all to Trash** covers every kind label but never `maybe`. Confirmation says whether starred emails are skipped (when they're protected) or included. Each email moves on its own, so replies in the same conversation thread stay intact, and Trash empties itself after 30 days.
 
-You have three options to complete the deletion:
+If you change the age, the attachment checkbox, or the starred checkbox after a scan, the labels may include mail that is now protected. Review then shows **Rescan needed** and disables every Move to Trash button until you rescan. Other changes (kinds, protections, strictness, label name) show **Update labels to match new rules**, which moves, adds and removes labels without a rescan. After a label-name change, the old labels are left empty and you can delete them in Gmail.
 
-**Option 1: Use the in-app "Move N to Trash" button**
-This moves each labeled email on its own, so replies in the same conversation thread stay intact. Trash empties itself after 30 days.
+To delete in Gmail yourself, click "Open in Gmail" on a row, star or unlabel anything you want to keep, then turn off Conversation view (Settings, gear, See all settings, General tab) so deleting a thread doesn't take newer replies with it. Then select all and delete.
 
-**Option 2: Delete in Gmail directly**
-Click "Open in Gmail" to see the labeled emails in Gmail. You can star or remove the label from any you want to keep. To delete the rest, go to Gmail Settings (gear) → See all settings → General tab, turn off Conversation view, then search for `label:purge` (or `label:purge-test` in development builds), select all, and delete. (Turning off Conversation view prevents deleting newer replies in the same thread.)
-
-**Option 3: Empty the spam folder**
-Use the in-app "Empty spam folder" button to move all emails in your spam folder to Trash in one action. This also moves each email individually to preserve conversation threads. Trash empties itself after 30 days.
+**Empty spam folder** moves everything in spam to Trash, one email at a time.
 
 ### Settings
 

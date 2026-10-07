@@ -1,27 +1,42 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
 import type { Settings } from "@core/decide.ts";
-import { appLabelNames, MAYBE } from "@core/labels.ts";
 import type { Screen } from "../App.tsx";
 import { Button } from "../components/Button.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
-import { reconcile, settingsEqual, summarize } from "../scan/reconcile.ts";
+import { countByLabel, reconcile, summarize } from "../scan/reconcile.ts";
 import type { Services } from "../services.ts";
+import {
+  buildRows,
+  gmailLabelUrl,
+  moveAllRows,
+  type ReviewRow,
+  scanState,
+  type ScanState,
+  totalOf,
+  trashConfirmBody,
+  updateMessage,
+} from "./reviewModel.ts";
 import styles from "./Review.module.css";
 
-type Pending = null | "trash" | "spam";
+type Pending = null | { kind: "trash"; rows: ReviewRow[] } | { kind: "spam" };
+
+interface Loaded {
+  settings: Settings;
+  rows: ReviewRow[];
+  nothing: boolean;
+  state: ScanState;
+  oldPrefix: string | null;
+}
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
 export function Review({ services, go }: { services: Services; go: (s: Screen) => void }) {
-  const { store, gmail, engine, labelName } = services;
-  const [counts, setCounts] = useState<{ purge: number; keep: number; review: number } | null>(null);
-  const [labeledNow, setLabeledNow] = useState<number | null>(null);
+  const { store, gmail, engine } = services;
+  const [data, setData] = useState<Loaded | null>(null);
   const [spamCount, setSpamCount] = useState<number | null>(null);
-  const [changed, setChanged] = useState(false);
-  const [settings, setSettings] = useState<Settings | null>(null);
   const [pending, setPending] = useState<Pending>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -29,12 +44,18 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
 
   async function load() {
     try {
-      const s = await store.getSettings();
+      const settings = await store.getSettings();
       const scan = await store.getScan();
-      setSettings(s);
-      setCounts(await summarize(store, s));
-      setChanged(!!scan?.settingsAtScan && !settingsEqual(scan.settingsAtScan, s));
-      setLabeledNow((await gmail.listIds(`label:${labelName} -is:starred`)).length);
+      const rows = buildRows(await countByLabel(gmail, settings), settings.labelPrefix);
+      const kept = await summarize(store, settings);
+      const state = scanState(scan, settings);
+      setData({
+        settings,
+        rows,
+        nothing: rows.length === 0 && kept.purge === 0 && kept.keep === 0 && kept.review === 0,
+        state,
+        oldPrefix: state.prefixChanged ? (scan?.settingsAtScan?.labelPrefix ?? null) : null,
+      });
       setSpamCount((await gmail.listIds("in:spam")).length);
       setError(null);
     } catch (e) {
@@ -47,12 +68,12 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
   }, []);
 
   async function updateLabels() {
-    if (!settings || updating) return;
+    if (!data || updating) return;
     setUpdating(true);
     setMessage(null);
     try {
-      const r = await reconcile({ gmail, store }, settings);
-      setMessage(`Moved ${r.moved}, added ${r.added}, removed ${r.removed}.`);
+      const r = await reconcile({ gmail, store }, data.settings);
+      setMessage(updateMessage(r, data.oldPrefix));
       await load();
     } catch (e) {
       setError(`Could not update the labels. ${errorText(e)}`);
@@ -61,26 +82,33 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
     }
   }
 
+  function busyBlocked(): boolean {
+    if (!engine.isBusy()) return false;
+    setMessage(null);
+    setError("Another job is running. Wait for it to finish.");
+    return true;
+  }
+
+  function rescan() {
+    if (!data || busyBlocked()) return;
+    void engine.start(data.settings);
+    go("scan");
+  }
+
   function confirm() {
     const job = pending;
     setPending(null);
-    if (engine.isBusy()) {
-      setMessage(null);
-      setError("Another job is running. Wait for it to finish.");
-      return;
-    }
-    if (job === "trash") {
-      if (!settings) return;
-      // Task 7 redesigns Review; until then, trash every app label except maybe.
-      const names = appLabelNames(settings.labelPrefix).filter((n) => n !== `${settings.labelPrefix}/${MAYBE}`);
-      void engine.trashLabels(names, settings.keepStarred);
+    if (!job || busyBlocked()) return;
+    if (job.kind === "trash") {
+      if (!data) return;
+      void engine.trashLabels(job.rows.map((r) => r.name), data.settings.keepStarred);
     } else {
       void engine.emptySpam();
     }
     go("scan");
   }
 
-  if (!counts) {
+  if (!data) {
     return error ? (
       <section className={styles.review}>
         <p className={styles.error} role="alert">{error}</p>
@@ -91,7 +119,7 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
     );
   }
 
-  if (counts.purge === 0 && counts.keep === 0 && counts.review === 0) {
+  if (data.nothing) {
     return (
       <section className={styles.review}>
         <h1 className={styles.heading}>Nothing to purge</h1>
@@ -101,17 +129,27 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
     );
   }
 
+  const { settings, rows, state } = data;
+  const all = moveAllRows(rows);
+  const allTotal = totalOf(all);
+
   return (
     <section className={styles.review}>
-      <h1 className={styles.heading}>{labeledNow?.toLocaleString() ?? "…"} emails are labeled "{labelName}"</h1>
+      <h1 className={styles.heading}>{totalOf(rows).toLocaleString()} emails labeled under "{settings.labelPrefix}"</h1>
       <p className={styles.lede}>
-        Look through them in Gmail. Remove the label (or star the email) to keep anything. Jev also kept {counts.keep.toLocaleString()} and left {counts.review.toLocaleString()} unlabeled because it wasn't sure.
+        Look through them in Gmail. Remove the label (or star the email) to keep anything. Jev left the rest unlabeled.
       </p>
 
+      {state.rescan && (
+        <div className={styles.notice}>
+          <p>You changed the age or what's always kept. Rescan to apply it.</p>
+          <Button onClick={rescan}>Rescan</Button>
+        </div>
+      )}
+
       <div className={styles.actions}>
-        <Button onClick={() => void openUrl(`https://mail.google.com/mail/u/0/#label/${encodeURIComponent(labelName)}`)}>Open in Gmail</Button>
         <Button variant="secondary" onClick={() => go("rules")}>Change rules</Button>
-        {changed && (
+        {state.changed && (
           <Button variant="secondary" disabled={updating} onClick={() => void updateLabels()}>
             {updating ? "Updating labels…" : "Update labels to match new rules"}
           </Button>
@@ -120,32 +158,48 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
       {message && <p role="status">{message}</p>}
       {error && <p className={styles.error} role="alert">{error}</p>}
 
-      <h2 className={styles.subheading}>When you're done reviewing</h2>
-      <div className={styles.choice}>
-        <div>
-          <h3 className={styles.choiceTitle}>Move labeled emails to Trash here</h3>
-          <p className={styles.muted}>Moves each labeled email on its own, so replies in the same thread stay. Trash empties itself after 30 days.</p>
-          <Button variant="danger" disabled={!labeledNow} onClick={() => setPending("trash")}>Move {labeledNow?.toLocaleString() ?? ""} to Trash</Button>
-        </div>
-        <div>
-          <h3 className={styles.choiceTitle}>Or delete them in Gmail yourself</h3>
-          <p className={styles.muted}>Turn off conversation view first, or deleting a thread also deletes newer replies in it.</p>
-          <ol className={styles.steps}>
-            <li>In Gmail, open Settings (gear) → See all settings.</li>
-            <li>On the General tab, set Conversation view to off and save.</li>
-            <li>Search <code>label:{labelName}</code>, select all, and delete.</li>
-          </ol>
-        </div>
+      <ul className={styles.rows}>
+        {rows.map((r) => (
+          <li key={r.name} className={styles.row}>
+            <div className={styles.rowInfo}>
+              <span className={styles.labelName}>{r.name}</span>
+              <span className={styles.count}>{r.count.toLocaleString()}</span>
+              {r.isMaybe && <p className={styles.muted}>Jev wasn't sure about these. Look through them before deleting.</p>}
+            </div>
+            <div className={styles.rowActions}>
+              <Button variant="secondary" onClick={() => void openUrl(gmailLabelUrl(r.name))}>Open in Gmail</Button>
+              <Button variant="danger" disabled={state.rescan} onClick={() => setPending({ kind: "trash", rows: [r] })}>
+                Move {r.count.toLocaleString()} to Trash
+              </Button>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <div className={styles.moveAll}>
+        <Button variant="danger" disabled={state.rescan || allTotal === 0} onClick={() => setPending({ kind: "trash", rows: all })}>
+          Move all to Trash
+        </Button>
+        <p className={styles.muted}>Moves {allTotal.toLocaleString()} emails from every label above except maybe. Each email moves on its own, so replies in the same thread stay. Trash empties itself after 30 days.</p>
+        {state.rescan && <p className={styles.muted}>Rescan first — your labels were made with different protection or age settings.</p>}
       </div>
+
+      <h2 className={styles.subheading}>Or delete them in Gmail yourself</h2>
+      <p className={styles.muted}>Turn off conversation view first, or deleting a thread also deletes newer replies in it.</p>
+      <ol className={styles.steps}>
+        <li>In Gmail, open Settings (gear) → See all settings.</li>
+        <li>On the General tab, set Conversation view to off and save.</li>
+        <li>Open a label above, select all, and delete.</li>
+      </ol>
 
       <h2 className={styles.subheading}>Spam folder</h2>
       <p className={styles.muted}>{spamCount === null ? "Counting spam…" : `${spamCount.toLocaleString()} emails in spam.`}</p>
-      <Button variant="secondary" disabled={!spamCount} onClick={() => setPending("spam")}>Empty spam folder</Button>
+      <Button variant="secondary" disabled={!spamCount} onClick={() => setPending({ kind: "spam" })}>Empty spam folder</Button>
 
       <ConfirmDialog
         open={pending !== null}
-        title={pending === "spam" ? "Empty the spam folder?" : "Move labeled emails to Trash?"}
-        body={pending === "spam" ? `${spamCount ?? 0} spam emails will move to Trash.` : `${labeledNow ?? 0} emails labeled "${labelName}" will move to Trash. Starred emails are skipped. You can restore them from Trash for 30 days.`}
+        title={pending?.kind === "spam" ? "Empty the spam folder?" : "Move labeled emails to Trash?"}
+        body={pending?.kind === "spam" ? `${spamCount ?? 0} spam emails will move to Trash.` : pending ? trashConfirmBody(pending.rows, settings.keepStarred) : ""}
         confirmLabel="Move to Trash"
         onConfirm={confirm}
         onCancel={() => setPending(null)}
