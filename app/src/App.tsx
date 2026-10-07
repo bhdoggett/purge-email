@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 import { type SecretsStatus, secretsStatus } from "./bridge/tauri.ts";
 import { Button } from "./components/Button.tsx";
 import { Header } from "./components/Header.tsx";
+import { Rules } from "./screens/Rules.tsx";
+import { Scan } from "./screens/Scan.tsx";
 import { Settings } from "./screens/Settings.tsx";
 import { Welcome } from "./screens/Welcome.tsx";
 import { Wizard } from "./screens/Wizard.tsx";
@@ -81,8 +83,8 @@ function Shell({ services }: { services: Services }) {
             }}
           />
         )}
-        {screen === "rules" && <p>rules</p>}
-        {screen === "scan" && <p>scan</p>}
+        {screen === "rules" && <Rules services={services} go={go} />}
+        {screen === "scan" && <Scan services={services} go={go} />}
         {screen === "review" && <p>review</p>}
       </main>
     </div>
