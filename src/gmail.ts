@@ -85,17 +85,25 @@ function isRateLimit(err: unknown): boolean {
   return e.status === 429 || (e.status === 403 && /quota|rate limit/i.test(e.message ?? ""));
 }
 
-function isTransient(err: unknown): boolean {
+const NETWORK_CODES = ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN", "ENOTFOUND", "ENETUNREACH", "ENETDOWN", "ECONNREFUSED", "ECONNABORTED", "EPIPE", "EHOSTUNREACH"];
+
+/** No response at all, such as Wi-Fi dropping or the Mac waking from sleep. */
+function isNetworkDown(err: unknown): boolean {
   const e = err as { status?: number; code?: string };
-  return (e.status !== undefined && e.status >= 500) || ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN"].includes(e.code ?? "");
+  return e.status === undefined && NETWORK_CODES.includes(e.code ?? "");
+}
+
+function isServerError(err: unknown): boolean {
+  const e = err as { status?: number };
+  return e.status !== undefined && e.status >= 500;
 }
 
 /** Count of rate-limit waits, for progress output. */
 export const retryStats = { rateLimited: 0 };
 
 /**
- * Retries rate limits forever (Gmail's quota is per minute, so waiting always
- * works) and transient server/network errors a few times. Other errors throw.
+ * Retries rate limits and network outages until they clear, and server errors
+ * a few times. Other errors throw.
  */
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
@@ -103,7 +111,8 @@ async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
       return await fn();
     } catch (err) {
       const rateLimited = isRateLimit(err);
-      if (!rateLimited && !(isTransient(err) && attempt < 5)) throw err;
+      // Rate limits and network outages are waited out; server errors get 5 tries.
+      if (!rateLimited && !isNetworkDown(err) && !(isServerError(err) && attempt < 5)) throw err;
       if (rateLimited) retryStats.rateLimited++;
       const delay = Math.min(2 ** Math.min(attempt, 5) * 2000, 60_000) * (0.75 + Math.random() * 0.5);
       await new Promise((r) => setTimeout(r, delay));

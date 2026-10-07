@@ -124,7 +124,14 @@ async function plan(gmail: Gmail): Promise<void> {
 		const ids = pendingLabels;
 		pendingLabels = [];
 		if (ids.length === 0) return;
-		await addLabel(gmail, labelId, ids);
+		try {
+			await addLabel(gmail, labelId, ids);
+		} catch (err) {
+			// Keep the IDs for the next flush instead of ending the run.
+			console.error(`labeling ${ids.length} messages failed, will retry: ${(err as Error).message}`);
+			pendingLabels.unshift(...ids);
+			return;
+		}
 		await appendFile(LABELED_PATH, ids.map((id) => JSON.stringify({ id, labeled: true })).join("\n") + "\n");
 		labeledCount += ids.length;
 	}

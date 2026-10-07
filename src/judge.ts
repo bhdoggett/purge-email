@@ -2,7 +2,11 @@ import { noul, TypeSafeClient } from "@typesafe-ai/sdk";
 import type { MessageSummary } from "./gmail.ts";
 
 // Accept JEV_API_KEY as an alias for the SDK's TYPESAFE_API_KEY.
-const client = new TypeSafeClient({ apiKey: process.env.TYPESAFE_API_KEY ?? process.env.JEV_API_KEY });
+const client = new TypeSafeClient({
+  apiKey: process.env.TYPESAFE_API_KEY ?? process.env.JEV_API_KEY,
+  // Ride out short network drops instead of marking emails unjudged.
+  retry: { maxRetries: 8, backoffMaxMs: 30_000 },
+});
 
 // Each question is an independent "reason to keep". They run in parallel
 // over the same state; code combines them into a decision.
