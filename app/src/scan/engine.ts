@@ -1,6 +1,6 @@
 import pLimit from "p-limit";
 import { decide, type Settings } from "@core/decide.ts";
-import { candidateQuery, labelFor, MAYBE, needsRescan } from "@core/labels.ts";
+import { candidateQuery, labelFor, MAYBE, needsRescan, olderThan } from "@core/labels.ts";
 import { type Answers, QUESTIONS_VERSION } from "@core/questions.ts";
 import { APIError } from "@typesafe-ai/sdk";
 import { AppError, errorAndCause, SignInExpiredError } from "../bridge/errors.ts";
@@ -86,7 +86,7 @@ export class ScanEngine {
     if (!limit && existing && !existing.finished && existing.settings && !needsRescan(existing.settings, settings)) return existing;
     const { gmail } = this.deps;
     const candidates = await gmail.listIds(candidateQuery(settings), limit);
-    const sent = await gmail.listIds(`in:sent older_than:${settings.years}y`);
+    const sent = await gmail.listIds(["in:sent", olderThan(settings.years)].filter(Boolean).join(" "));
     const scan: ScanRecord = {
       years: settings.years,
       settings,

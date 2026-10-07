@@ -155,8 +155,8 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
       <div className={styles.footer}>
         <label className={styles.years}>
           Older than
-          <input type="number" min={1} max={30} value={settings.years} disabled={busy} onChange={(e) => update({ years: Math.max(1, Number(e.target.value) || 1) })} />
-          years
+          <input type="number" min={0} max={30} value={settings.years} disabled={busy} onChange={(e) => update({ years: Math.min(30, Math.max(0, Math.round(Number(e.target.value) || 0))) })} />
+          years{settings.years === 0 && " (any age)"}
         </label>
         {import.meta.env.DEV && (
           <label className={styles.years}>

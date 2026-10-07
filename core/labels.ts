@@ -37,9 +37,14 @@ export function validatePrefix(raw: string): string | null {
   return null;
 }
 
+/** Gmail age term for `years`, or null for 0 years (any age). */
+export function olderThan(years: number): string | null {
+  return years > 0 ? `older_than:${years}y` : null;
+}
+
 export function candidateQuery(settings: Settings): string {
   return [
-    `older_than:${settings.years}y`,
+    olderThan(settings.years),
     settings.keepAttachments ? "-has:attachment" : null,
     settings.keepStarred ? "-is:starred" : null,
     "-in:spam -in:trash -in:chats",

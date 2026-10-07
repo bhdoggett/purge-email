@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "./decide.ts";
-import { appLabelNames, candidateQuery, labelFor, needsRescan, validatePrefix } from "./labels.ts";
+import { appLabelNames, candidateQuery, olderThan, labelFor, needsRescan, validatePrefix } from "./labels.ts";
 import { type Answers, QUESTIONS_VERSION } from "./questions.ts";
 
 function answers(kind: Partial<Answers["kind"]>): Answers {
@@ -52,6 +52,12 @@ describe("candidateQuery", () => {
   it("includes protections only when on", () => {
     expect(candidateQuery(DEFAULT_SETTINGS)).toBe("older_than:10y -has:attachment -is:starred -in:spam -in:trash -in:chats");
     expect(candidateQuery({ ...DEFAULT_SETTINGS, keepAttachments: false, keepStarred: false, years: 5 })).toBe("older_than:5y -in:spam -in:trash -in:chats");
+  });
+
+  it("leaves out the age term for 0 years, so mail of any age is a candidate", () => {
+    expect(candidateQuery({ ...DEFAULT_SETTINGS, years: 0 })).toBe("-has:attachment -is:starred -in:spam -in:trash -in:chats");
+    expect(olderThan(0)).toBeNull();
+    expect(olderThan(3)).toBe("older_than:3y");
   });
 });
 

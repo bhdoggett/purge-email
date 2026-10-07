@@ -198,6 +198,17 @@ describe("ScanEngine", () => {
     expect(idsWithLabel(gmail, "purge/promotion")).toEqual(["old"]);
   });
 
+  it("scans mail of any age when years is 0", async () => {
+    const { engine, store, gmail } = await setup([makeSummary("new"), makeSummary("old")]);
+    gmail.ages.set("new", 0);
+    const listIds = vi.spyOn(gmail, "listIds");
+    await engine.start({ ...DEFAULT_SETTINGS, years: 0 });
+    expect(engine.getProgress().stage).toBe("done");
+    expect((await store.getScan())?.candidateIds).toEqual(["new", "old"]);
+    expect(listIds.mock.calls.map(([q]) => q).filter((q) => q.includes("older_than"))).toEqual([]);
+    expect(listIds).toHaveBeenCalledWith("in:sent");
+  });
+
   it("does not re-add a label the user removed between scans", async () => {
     let now = 0;
     const { gmail, engine, store } = await setup(undefined, { now: () => now });
