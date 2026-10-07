@@ -1,8 +1,8 @@
 import type { Settings } from "@core/decide.ts";
+import { candidateQuery } from "@core/labels.ts";
 import { QUESTIONS_VERSION } from "@core/questions.ts";
 import type { Gmail } from "../gmail/client.ts";
 import type { Store } from "../storage/db.ts";
-import { candidateQuery } from "./engine.ts";
 import { JEV_USD_PER_TOKEN } from "./progress.ts";
 
 const DEFAULT_TOKENS_PER_EMAIL = 800;
@@ -10,7 +10,7 @@ const DEFAULT_TOKENS_PER_EMAIL = 800;
 const DEFAULT_MS_PER_EMAIL = 400;
 
 export async function estimate(deps: { gmail: Gmail; store: Store }, settings: Settings, limit?: number) {
-  const ids = (await deps.gmail.listIds(candidateQuery(settings.years), limit)).map((m) => m.id);
+  const ids = (await deps.gmail.listIds(candidateQuery(settings), limit)).map((m) => m.id);
   const answers = await deps.store.allAnswers();
   const summaries = await deps.store.allSummaries();
   const judged = [...answers.values()].filter((a) => a.version === QUESTIONS_VERSION);

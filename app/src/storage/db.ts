@@ -13,6 +13,8 @@ export interface LabelRecord {
 
 export interface ScanRecord {
   years: number;
+  /** Settings the candidate list was built with; missing on scans saved before category labels. */
+  settings?: Settings;
   candidateIds: string[];
   repliedThreadIds: string[];
   finished: boolean;

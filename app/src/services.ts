@@ -33,7 +33,7 @@ export function getServices(): Promise<Services> {
     const store = await openStore(undefined, { ...DEFAULT_SETTINGS, labelPrefix: DEFAULT_PREFIX });
     let engine: ScanEngine | undefined;
     const gmail = createGmail({ fetch: proxyFetch, onRateLimit: (ms) => engine?.noteRateLimit(ms) });
-    engine = new ScanEngine({ gmail, judge: createJudge(), store, labelName: DEFAULT_PREFIX, notify: (t, b) => void notify(t, b) });
+    engine = new ScanEngine({ gmail, judge: createJudge(), store, notify: (t, b) => void notify(t, b) });
     return { store, gmail, engine, labelName: DEFAULT_PREFIX };
   })();
   services.catch(() => {

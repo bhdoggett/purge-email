@@ -1,6 +1,6 @@
 import pLimit from "p-limit";
-import { decide, DEFAULT_SETTINGS, type Settings } from "@core/decide.ts";
-import { candidateQuery as buildCandidateQuery } from "@core/labels.ts";
+import { decide, type Settings } from "@core/decide.ts";
+import { candidateQuery, labelFor, MAYBE, needsRescan } from "@core/labels.ts";
 import { type Answers, QUESTIONS_VERSION } from "@core/questions.ts";
 import { APIError } from "@typesafe-ai/sdk";
 import { AppError, errorAndCause, SignInExpiredError } from "../bridge/errors.ts";
@@ -14,7 +14,6 @@ export interface EngineDeps {
   gmail: Gmail;
   judge: Judge;
   store: Store;
-  labelName: string;
   concurrency?: number;
   labelBatch?: number;
   now?: () => number;
@@ -44,8 +43,12 @@ async function settleAll(tasks: Promise<unknown>[]): Promise<void> {
   if (failed) throw failed.reason;
 }
 
-export function candidateQuery(years: number): string {
-  return buildCandidateQuery({ ...DEFAULT_SETTINGS, years });
+/** Gmail answers 400 or 409 when it refuses a label name. */
+function asLabelNameError(err: unknown): unknown {
+  if (err instanceof GmailError && (err.status === 400 || err.status === 409)) {
+    return new AppError({ kind: "Invalid", detail: "Gmail didn't accept that label name. Try another on the Rules screen." });
+  }
+  return err;
 }
 
 export class ScanEngine {
@@ -87,12 +90,14 @@ export class ScanEngine {
 
   private async loadOrCreateScan(settings: Settings, limit?: number): Promise<ScanRecord> {
     const existing = await this.deps.store.getScan();
-    if (!limit && existing && !existing.finished && existing.years === settings.years) return existing;
+    // A scan saved without its settings can't be compared, so it gets fresh candidates.
+    if (!limit && existing && !existing.finished && existing.settings && !needsRescan(existing.settings, settings)) return existing;
     const { gmail } = this.deps;
-    const candidates = await gmail.listIds(candidateQuery(settings.years), limit);
+    const candidates = await gmail.listIds(candidateQuery(settings), limit);
     const sent = await gmail.listIds(`in:sent older_than:${settings.years}y`);
     const scan: ScanRecord = {
       years: settings.years,
+      settings,
       candidateIds: candidates.map((c) => c.id),
       repliedThreadIds: [...new Set(sent.map((s) => s.threadId))],
       finished: false,
@@ -110,7 +115,7 @@ export class ScanEngine {
     this.stopRequested = false;
     // Snapshot so edits made while the scan runs don't affect it.
     const settings: Settings = structuredClone(settingsIn);
-    const { gmail, judge, store, labelName } = this.deps;
+    const { gmail, judge, store } = this.deps;
     this.progress = { ...INITIAL_PROGRESS, stage: "finding", job: "scan" };
     this.set({});
 
@@ -118,25 +123,42 @@ export class ScanEngine {
       const scan = await this.loadOrCreateScan(settings, opts.limit);
       const replied = new Set(scan.repliedThreadIds);
       const labels = await store.allLabels();
-      const labelId = await gmail.ensureLabel(labelName);
       const pace = new Pace();
-      const pending: string[] = [];
+      /** Label name → records waiting to be added in Gmail and stored. */
+      const pending = new Map<string, LabelRecord[]>();
+      const labelIds = new Map<string, Promise<string>>();
       const labelBatch = this.deps.labelBatch ?? LABEL_BATCH;
       let signInExpired = false;
       let fatal: unknown = null;
       let consecutiveFailures = 0;
 
-      const flush = async () => {
-        if (pending.length === 0) return;
-        const ids = pending.splice(0);
+      const labelIdFor = (name: string): Promise<string> => {
+        let id = labelIds.get(name);
+        if (!id) {
+          id = gmail.ensureLabel(name).catch((err: unknown) => {
+            labelIds.delete(name);
+            throw asLabelNameError(err);
+          });
+          labelIds.set(name, id);
+        }
+        return id;
+      };
+
+      const flush = async (name: string) => {
+        const records = pending.get(name)?.splice(0) ?? [];
+        if (records.length === 0) return;
         try {
-          await gmail.addLabel(labelId, ids);
-          await store.putLabels(ids.map((id): LabelRecord => ({ id, label: labelName, labeledAt: this.now(), userRemoved: false, userChosen: false })));
+          await gmail.addLabel(await labelIdFor(name), records.map((r) => r.id));
+          await store.putLabels(records);
         } catch (err) {
-          pending.unshift(...ids);
+          pending.get(name)!.unshift(...records);
           throw err;
         }
-        this.set({ labeled: this.progress.labeled + ids.length });
+        this.set({ labeled: this.progress.labeled + records.length });
+      };
+
+      const flushAll = async () => {
+        for (const name of pending.keys()) await flush(name);
       };
 
       this.set({ stage: "judging", total: scan.candidateIds.length });
@@ -158,7 +180,7 @@ export class ScanEngine {
               }
               const cached = await store.getAnswers(id);
               answers = cached && cached.version === QUESTIONS_VERSION ? cached : null;
-              if (!answers && summary.attachmentNames.length === 0) {
+              if (!answers && (summary.attachmentNames.length === 0 || !settings.keepAttachments)) {
                 answers = await judge({ ...summary, ownerReplied: replied.has(summary.threadId) });
                 await store.putAnswers(id, answers);
                 networked = true;
@@ -186,12 +208,17 @@ export class ScanEngine {
               answers,
               settings,
             );
-            if (decision === "purge" && !labels.has(id)) {
-              labels.set(id, { id, label: labelName, labeledAt: this.now(), userRemoved: false, userChosen: false });
-              pending.push(id);
-              if (pending.length >= labelBatch) {
+            const label = labelFor(decision, answers, settings);
+            if (label !== null && !labels.has(id)) {
+              // One record, so the labeledAt in memory is the one stored at flush.
+              const record: LabelRecord = { id, label, labeledAt: this.now(), userRemoved: false, userChosen: false };
+              labels.set(id, record);
+              const list = pending.get(label) ?? [];
+              list.push(record);
+              pending.set(label, list);
+              if (list.length >= labelBatch) {
                 try {
-                  await flush();
+                  await flush(label);
                 } catch (err) {
                   if (isSignInExpired(err)) signInExpired = true;
                   else fatal = err;
@@ -204,8 +231,12 @@ export class ScanEngine {
             const msPer = pace.msPerItem();
             this.set({
               done,
-              counts: { ...this.progress.counts, [decision]: this.progress.counts[decision] + 1 },
-              recent: [{ id, from: summary.from, subject: summary.subject, decision, reason }, ...this.progress.recent].slice(0, FEED_SIZE),
+              counts: {
+                ...this.progress.counts,
+                [decision]: this.progress.counts[decision] + 1,
+                maybe: this.progress.counts.maybe + (label === `${settings.labelPrefix}/${MAYBE}` ? 1 : 0),
+              },
+              recent: [{ id, from: summary.from, subject: summary.subject, decision, reason, label }, ...this.progress.recent].slice(0, FEED_SIZE),
               etaMs: msPer === null ? null : msPer * (scan.candidateIds.length - done),
               rateLimitUntil: this.progress.rateLimitUntil && this.progress.rateLimitUntil > this.now() ? this.progress.rateLimitUntil : null,
             });
@@ -215,7 +246,7 @@ export class ScanEngine {
 
       if (!signInExpired && fatal === null) {
         this.set({ stage: "labeling" });
-        await flush();
+        await flushAll();
       }
 
       const msPerEmail = pace.msPerItem() ?? scan.msPerEmail;
@@ -234,7 +265,8 @@ export class ScanEngine {
         await reconcile({ gmail, store, now: () => this.now() }, settings);
         await store.putScan({ ...scan, finished: true, settingsAtScan: settings, msPerEmail });
         this.set({ stage: "done", etaMs: null, rateLimitUntil: null });
-        this.deps.notify?.("Scan finished", `${this.progress.counts.purge} emails labeled for review.`);
+        const { purge, maybe } = this.progress.counts;
+        this.deps.notify?.("Scan finished", `${purge} to purge and ${maybe} to check, labeled under "${settings.labelPrefix}".`);
       }
     } catch (err) {
       this.set({ stage: isSignInExpired(err) ? "signInExpired" : "error", error: err, etaMs: null });
@@ -243,7 +275,7 @@ export class ScanEngine {
     }
   }
 
-  private async trashQuery(q: string, job: "trash" | "spam"): Promise<void> {
+  private async trashFound(job: "trash" | "spam", find: () => Promise<string[]>): Promise<void> {
     if (this.busy) return;
     this.busy = true;
     this.stopRequested = false;
@@ -251,7 +283,7 @@ export class ScanEngine {
     this.progress = { ...INITIAL_PROGRESS, stage: "finding", job };
     this.set({});
     try {
-      const ids = (await gmail.listIds(q)).map((m) => m.id);
+      const ids = await find();
       this.set({ stage: "trashing", total: ids.length });
       const pace = new Pace();
       const run = pLimit(this.deps.concurrency ?? 4);
@@ -310,11 +342,22 @@ export class ScanEngine {
     }
   }
 
-  trashLabeled(): Promise<void> {
-    return this.trashQuery(`label:${this.deps.labelName} -is:starred`, "trash");
+  /** Moves every email carrying one of `names` to Trash, skipping starred ones when `keepStarred`. */
+  trashLabels(names: string[], keepStarred: boolean): Promise<void> {
+    const { gmail } = this.deps;
+    return this.trashFound("trash", async () => {
+      const ids = new Set<string>();
+      for (const name of names) {
+        const labelId = await gmail.findLabelId(name);
+        if (labelId === null) continue;
+        for (const m of await gmail.listIds(keepStarred ? "-is:starred" : "", undefined, { labelIds: [labelId] })) ids.add(m.id);
+      }
+      return [...ids];
+    });
   }
 
   emptySpam(): Promise<void> {
-    return this.trashQuery("in:spam", "spam");
+    const { gmail } = this.deps;
+    return this.trashFound("spam", async () => (await gmail.listIds("in:spam")).map((m) => m.id));
   }
 }

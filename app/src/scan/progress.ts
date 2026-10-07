@@ -8,6 +8,8 @@ export interface FeedItem {
   subject: string;
   decision: Decision;
   reason: string;
+  /** App label the email got, or null when it got none. */
+  label: string | null;
 }
 
 export interface Progress {
@@ -15,7 +17,8 @@ export interface Progress {
   job: "scan" | "trash" | "spam" | null;
   done: number;
   total: number;
-  counts: { purge: number; keep: number; review: number; failed: number };
+  /** `maybe` counts the review decisions that got the maybe label; they are also in `review`. */
+  counts: { purge: number; keep: number; review: number; maybe: number; failed: number };
   labeled: number;
   recent: FeedItem[];
   rateLimitUntil: number | null;
@@ -29,7 +32,7 @@ export const INITIAL_PROGRESS: Progress = {
   job: null,
   done: 0,
   total: 0,
-  counts: { purge: 0, keep: 0, review: 0, failed: 0 },
+  counts: { purge: 0, keep: 0, review: 0, maybe: 0, failed: 0 },
   labeled: 0,
   recent: [],
   rateLimitUntil: null,

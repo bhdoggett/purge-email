@@ -1,6 +1,7 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useEffect, useState } from "react";
 import type { Settings } from "@core/decide.ts";
+import { appLabelNames, MAYBE } from "@core/labels.ts";
 import type { Screen } from "../App.tsx";
 import { Button } from "../components/Button.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
@@ -68,7 +69,14 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
       setError("Another job is running. Wait for it to finish.");
       return;
     }
-    void (job === "trash" ? engine.trashLabeled() : engine.emptySpam());
+    if (job === "trash") {
+      if (!settings) return;
+      // Task 7 redesigns Review; until then, trash every app label except maybe.
+      const names = appLabelNames(settings.labelPrefix).filter((n) => n !== `${settings.labelPrefix}/${MAYBE}`);
+      void engine.trashLabels(names, settings.keepStarred);
+    } else {
+      void engine.emptySpam();
+    }
     go("scan");
   }
 
