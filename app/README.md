@@ -76,7 +76,7 @@ This produces an unsigned `.app` bundle. macOS will ask you to allow it in Syste
 
 ## How It Works
 
-The app has six main screens:
+The app has six main screens. After setup, the work runs in four stages: Rules › Scan › Review › Apply.
 
 ### Welcome
 
@@ -103,25 +103,36 @@ Email bodies and attachments are never sent to Jev. The scan runs in the backgro
 
 ### Review
 
-After a scan, Review shows one row per label that has email in it, with the count (starred emails are left out of the count when they're protected) and an **Open in Gmail** button. The `maybe` row carries a note to look through it before deleting. Review has no delete or trash buttons: the app only labels.
+Scan only judges your mail and saves the results on this computer. It doesn't touch Gmail, so no labels appear there during a scan. Review shows every scanned email in a table with its sender, subject, date, label and Jev's reason.
 
-**Before deleting anything in Gmail, make sure Review shows no warning.** Review shows a prominent note above the rows whenever the labels in Gmail may not match your current rules:
+- **Filter** by decision (Purge, Maybe, Keep, or Changed by you), by category, or by text in the sender or subject.
+- **Select** rows with a click, Cmd-click to add or remove one, Shift-click for a range, or Cmd-A for every row the filters show.
+- **Change** the selected emails with **Use suggested label**, **Move to** a label, **Maybe**, **Keep (no label)**, or **Undo my change**.
 
-- **"Your labels don't match your current rules yet. Click Update labels before deleting anything in Gmail."** You changed the kinds, protections, strictness or label name since the labels were made. **Update labels** moves, adds and removes labels without a rescan. After a label-name change, the old labels are left empty and you can delete them in Gmail.
-- **"…Click Rescan before deleting anything in Gmail."** You changed the age, the attachment checkbox or the starred checkbox. Only a new scan finds the right emails.
-- **"…Scan first before deleting anything in Gmail."** The app doesn't know which rules made the labels, for example after Settings → Clear scan data or before a scan has finished. Update labels isn't offered here, because without a scan it would remove every label.
-- **"Some labels are still settling in Gmail. Try Update labels again in a few minutes."** Gmail's label lists can lag for a few minutes after the app changes a label. For mail labeled in the last 10 minutes, the app changes nothing unless Gmail confirms the label it recorded, so it never undoes a change you just made. Click Update labels again once the lists catch up.
+Your changes are saved on this computer, cost nothing, and don't run Jev again. They survive rescans and Settings → Clear scan data. Nothing reaches Gmail until you apply.
+
+If you changed the age, the attachment checkbox or the starred checkbox since the scan, Review asks you to rescan first: only a new scan finds the right emails.
+
+### Apply
+
+Apply checks Gmail and shows what will change, for example "Add 120 labels · Move 4 · Remove 2", with a count for each label. Changes to your rules since the last apply show up here as pending changes too. Click **Apply labels** to write them. If you renamed the label, the old labels are emptied and you can delete them in Gmail.
+
+If you change a label in Gmail after choosing one in Review, the Gmail change wins. A choice you make in Review after a change in Gmail wins.
+
+Gmail's label lists can lag for a few minutes after the app changes a label. For mail labeled in the last 10 minutes, the app changes nothing unless Gmail confirms the label it recorded, so it never undoes a change you just made. If Apply says some labels are still settling, try again in a few minutes.
+
+After applying, Apply lists each label with its count and an **Open in Gmail** button. The `maybe` label carries a note to look through it before deleting. Apply has no delete or trash buttons: the app only labels.
 
 #### Deleting in Gmail safely
 
 1. In Gmail, open Settings (gear) → See all settings. On the General tab, set Conversation view to off and save. Otherwise deleting a thread also deletes newer replies in it.
-2. Click **Open in Gmail** on a row in Review.
+2. Click **Open in Gmail** on a label in Apply.
 3. To keep an email, **remove the label from it**. Starring is not enough: Gmail's select-all deletes everything under the label, starred mail included.
 4. Select all and delete. Gmail keeps deleted mail in Trash for 30 days.
 
 ### Settings
 
-Access settings from a button in the header. Here you can remove your saved Jev key, Google credentials, and scan data to start fresh or switch accounts. After clearing scan data, Review asks you to scan again before deleting anything in Gmail.
+Access settings from a button in the header. Here you can remove your saved Jev key, Google credentials, and scan data to start fresh or switch accounts. Your Review changes are kept. After clearing scan data, Apply asks you to scan again before it writes anything to Gmail.
 
 ## Architecture
 
