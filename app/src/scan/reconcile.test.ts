@@ -132,6 +132,18 @@ describe("planReconcile", () => {
     expect(plan.put).toEqual([{ id: "a", label: "old/scam", labeledAt: NOW, userRemoved: false, userChosen: false }]);
   });
 
+  it("removes the label from a just-labeled email that is no longer a candidate and not yet in Gmail's lists", () => {
+    const records = new Map([["a", rec("a", "purge/newsletter", { labeledAt: NOW - 1000 })]]);
+    const plan = planReconcile(input({}, { records }));
+    expect(plan.userRemoved + plan.userChosen).toBe(0);
+    expect(plan.remove).toEqual(new Map([["purge/newsletter", ["a"]]]));
+    expect(plan.add.size).toBe(0);
+    expect(plan.del).toEqual(["a"]);
+
+    // Unless it shows up in Trash or Spam.
+    expect(empty(planReconcile(input({}, { records, anywhere: new Map([["a", "purge/newsletter"]]), live: new Set() })))).toBe(true);
+  });
+
   it("keeps labeledAt when a record is corrected without adding a label", () => {
     const records = new Map([["a", rec("a", "purge/promotion", { labeledAt: NOW - 1000 })]]);
     const plan = planReconcile(input({ a: fakeAnswers({ newsletter: 0.95 }) }, { records, ...labeled({ a: "purge/newsletter" }) }));

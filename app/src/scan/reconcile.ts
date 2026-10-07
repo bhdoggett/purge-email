@@ -100,8 +100,10 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
     desired.set(id, s ? labelFor(decisionOf(s, answers, i.settings), answers, i.settings) : null);
   }
 
-  // 3. Apply to live and candidate ids the user hasn't taken over.
-  for (const id of new Set([...i.candidates, ...i.live])) {
+  // 3. Apply to live, candidate and just-labeled ids the user hasn't taken over.
+  // Just-labeled records too: Gmail's lists may not show them yet, but their labels still need to follow the rules.
+  const recent = [...records.values()].filter((r) => inGrace(r)).map((r) => r.id);
+  for (const id of new Set([...i.candidates, ...i.live, ...recent])) {
     const r = records.get(id);
     if (r?.userRemoved || r?.userChosen) continue;
     const isLive = i.live.has(id);
