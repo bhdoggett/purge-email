@@ -14,10 +14,15 @@ export interface Services {
   labelName: string;
 }
 
+/** Best effort: a notification that can't be shown is not worth an error. */
 async function notify(title: string, body: string) {
-  let granted = await isPermissionGranted();
-  if (!granted) granted = (await requestPermission()) === "granted";
-  if (granted) sendNotification({ title, body });
+  try {
+    let granted = await isPermissionGranted();
+    if (!granted) granted = (await requestPermission()) === "granted";
+    if (granted) sendNotification({ title, body });
+  } catch (err) {
+    console.warn("notification failed", err);
+  }
 }
 
 let services: Promise<Services> | null = null;
