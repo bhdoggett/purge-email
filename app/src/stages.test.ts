@@ -22,9 +22,11 @@ describe("stageAvailability", () => {
     expect(stageAvailability(null, true).scan).toBe(true);
     expect(stageAvailability(scan(), false)).toEqual({ rules: true, scan: true, review: false });
   });
-  it("allows Results once a scan has finished at least once", () => {
+  it("allows Results only when the latest scan finished and nothing is running", () => {
     expect(stageAvailability(scan({ finished: true, settingsAtScan: DEFAULT_SETTINGS }), false).review).toBe(true);
-    // A new unfinished scan keeps the earlier labels' settings, so Results stays open.
-    expect(stageAvailability(scan({ finished: false, settingsAtScan: DEFAULT_SETTINGS }), true).review).toBe(true);
+  });
+  it("greys Results out as soon as a new scan starts, and while it's paused", () => {
+    expect(stageAvailability(scan({ finished: false, settingsAtScan: DEFAULT_SETTINGS }), true).review).toBe(false);
+    expect(stageAvailability(scan({ finished: false, settingsAtScan: DEFAULT_SETTINGS }), false).review).toBe(false);
   });
 });
