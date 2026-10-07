@@ -53,11 +53,11 @@ function Shell({ services }: { services: Services }) {
   const [attempt, setAttempt] = useState(0);
   const [available, setAvailable] = useState<StageAvailability>({ rules: true, scan: false, review: false });
 
-  // Scan is reachable once a scan exists; Results once a scan has finished at least once.
+  // Scan is reachable when this session has scan progress; Results when the latest scan finished.
   // Re-checked on every screen change and scan stage change (e.g. after Clear scan data).
   useEffect(() => {
     void services.store.getScan().then(
-      (scan) => setAvailable(stageAvailability(scan, services.engine.isBusy())),
+      (scan) => setAvailable(stageAvailability(scan, services.engine.isBusy(), progress.stage)),
       () => setAvailable({ rules: true, scan: services.engine.isBusy(), review: false }),
     );
   }, [services, screen, progress.stage]);

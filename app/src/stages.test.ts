@@ -16,17 +16,22 @@ const scan = (over: Partial<ScanRecord> = {}): ScanRecord => ({
 
 describe("stageAvailability", () => {
   it("allows only Rules before any scan", () => {
-    expect(stageAvailability(null, false)).toEqual({ rules: true, scan: false, review: false });
+    expect(stageAvailability(null, false, "idle")).toEqual({ rules: true, scan: false, review: false });
   });
-  it("allows Scan while a scan runs or once one exists", () => {
-    expect(stageAvailability(null, true).scan).toBe(true);
-    expect(stageAvailability(scan(), false)).toEqual({ rules: true, scan: true, review: false });
+  it("allows Scan only when this session has scan progress", () => {
+    expect(stageAvailability(null, true, "judging").scan).toBe(true);
+    expect(stageAvailability(scan(), false, "paused").scan).toBe(true);
+    expect(stageAvailability(scan({ finished: true, settingsAtScan: DEFAULT_SETTINGS }), false, "done").scan).toBe(true);
+  });
+  it("keeps Scan greyed out after a relaunch even when a scan is saved", () => {
+    expect(stageAvailability(scan(), false, "idle").scan).toBe(false);
+    expect(stageAvailability(scan({ finished: true, settingsAtScan: DEFAULT_SETTINGS }), false, "idle").scan).toBe(false);
   });
   it("allows Results only when the latest scan finished and nothing is running", () => {
-    expect(stageAvailability(scan({ finished: true, settingsAtScan: DEFAULT_SETTINGS }), false).review).toBe(true);
+    expect(stageAvailability(scan({ finished: true, settingsAtScan: DEFAULT_SETTINGS }), false, "done").review).toBe(true);
   });
   it("greys Results out as soon as a new scan starts, and while it's paused", () => {
-    expect(stageAvailability(scan({ finished: false, settingsAtScan: DEFAULT_SETTINGS }), true).review).toBe(false);
-    expect(stageAvailability(scan({ finished: false, settingsAtScan: DEFAULT_SETTINGS }), false).review).toBe(false);
+    expect(stageAvailability(scan({ finished: false, settingsAtScan: DEFAULT_SETTINGS }), true, "judging").review).toBe(false);
+    expect(stageAvailability(scan({ finished: false, settingsAtScan: DEFAULT_SETTINGS }), false, "paused").review).toBe(false);
   });
 });
