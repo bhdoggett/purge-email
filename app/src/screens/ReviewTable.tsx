@@ -1,8 +1,9 @@
-import { type KeyboardEvent, type MouseEvent, useLayoutEffect, useRef, useState } from "react";
+import { type MouseEvent, useLayoutEffect, useRef, useState } from "react";
 import { MAYBE } from "@core/labels.ts";
 import { EMPTY_SELECTION, select, selectAll, type Selection, type TableRow } from "./reviewTable.ts";
 import styles from "./ReviewTable.module.css";
 
+/** Must match `.row { height }` in ReviewTable.module.css. */
 const ROW_HEIGHT = 40;
 /** Extra rows rendered above and below the visible ones, so fast scrolling doesn't flash blank space. */
 const OVERSCAN = 10;
@@ -70,15 +71,8 @@ export function ReviewTable({ rows, selection, onSelectionChange }: Props) {
     onSelectionChange(select(selection, rows, index, { shift: e.shiftKey, meta: e.metaKey || e.ctrlKey }));
   }
 
-  function onKeyDown(e: KeyboardEvent) {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") {
-      e.preventDefault();
-      onSelectionChange(selectAll(rows));
-    }
-  }
-
   return (
-    <div className={styles.table} role="grid" aria-multiselectable="true" aria-rowcount={rows.length + 1} onKeyDown={onKeyDown}>
+    <div className={styles.table} role="grid" aria-multiselectable="true" aria-rowcount={rows.length + 1}>
       <div className={`${styles.row} ${styles.head}`} role="row" aria-rowindex={1}>
         <span className={styles.check} role="columnheader">
           <input

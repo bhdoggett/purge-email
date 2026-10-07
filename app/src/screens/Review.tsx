@@ -9,12 +9,25 @@ import type { Summary } from "../gmail/client.ts";
 import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
 import type { Services } from "../services.ts";
 import type { Override } from "../storage/db.ts";
-import { buildTableRows, type DecisionFilter, EMPTY_SELECTION, type Filters, filterRows, NO_FILTERS, pruneSelection, type Selection, suggestedOverrides } from "./reviewTable.ts";
+import {
+  buildTableRows,
+  type DecisionFilter,
+  EMPTY_SELECTION,
+  type Filters,
+  filterRows,
+  NO_FILTERS,
+  pruneSelection,
+  selectAll,
+  type Selection,
+  suggestedOverrides,
+} from "./reviewTable.ts";
 import { ReviewTable } from "./ReviewTable.tsx";
 import styles from "./Review.module.css";
 
 interface Loaded {
   settings: Settings;
+  /** No finished scan, e.g. after Settings → Clear scan data. */
+  noscan: boolean;
   rescan: boolean;
   ids: string[];
   summaries: Map<string, Summary>;
@@ -37,6 +50,13 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** True when keys typed now go into a text field, where Cmd-A should select its text. */
+function typingInField(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return true;
+  return target instanceof HTMLInputElement && target.type !== "checkbox";
+}
+
 export function Review({ services, go, onNext }: { services: Services; go: (s: Screen) => void; onNext: () => void }) {
   const { store, engine } = services;
   const [data, setData] = useState<Loaded | null>(null);
@@ -57,6 +77,7 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
       setOverrides(saved);
       setData({
         settings,
+        noscan: !scan?.finished || !scan.settingsAtScan,
         rescan: !!scan?.settingsAtScan && needsRescan(scan.settingsAtScan, settings),
         ids: scan?.candidateIds ?? [],
         summaries,
@@ -78,6 +99,17 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
   // Filter changes already clear the selection, so this only bites after an action rebuilds the rows.
   useLayoutEffect(() => {
     setSelection((s) => pruneSelection(s, filtered));
+  }, [filtered]);
+
+  // Cmd/Ctrl-A selects every email shown, wherever focus is on this screen, except in a text field.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "a" || typingInField(e.target)) return;
+      e.preventDefault();
+      setSelection(selectAll(filtered));
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, [filtered]);
 
   function changeFilters(next: Partial<Filters>) {
@@ -159,6 +191,16 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
     );
   }
 
+  if (data.noscan) {
+    return (
+      <section className={styles.review}>
+        <h1 className={styles.heading}>No scan yet</h1>
+        <p className={styles.lede}>Scan your mail first.</p>
+        <Button onClick={() => go("rules")}>Back to rules</Button>
+      </section>
+    );
+  }
+
   if (data.rescan) {
     return (
       <section className={styles.review}>
@@ -175,7 +217,7 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
   return (
     <section className={styles.review}>
       <h1 className={styles.heading}>Review before labeling</h1>
-      <p className={styles.lede}>Nothing is in Gmail yet. Change any label here, then go to Apply. Changes cost nothing and don't run Jev again.</p>
+      <p className={styles.lede}>Changes here stay on this computer until you apply them. Change any label here, then go to Apply. Changes cost nothing and don't run Jev again.</p>
 
       <div className={styles.filters}>
         <div className={styles.segmented} role="group" aria-label="Decision">

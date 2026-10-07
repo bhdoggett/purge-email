@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Screen, WizardTarget } from "../App.tsx";
 import { Button } from "../components/Button.tsx";
 import { Feed } from "../components/Feed.tsx";
@@ -36,6 +36,13 @@ export function Scan({ services, go, openWizard }: { services: Services; go: (s:
   const running = services.engine.isBusy();
   const stage = p.stage === "judging" ? `Reading and judging ${p.done.toLocaleString()} of ${p.total.toLocaleString()}` : (STAGE_COPY[p.stage] ?? "");
   const mapped = p.error ? errorToStep(p.error) : null;
+
+  // A scan that finishes while this screen is open goes straight to Review. Opening Scan after a finished scan does not.
+  const lastStage = useRef(p.stage);
+  useEffect(() => {
+    if (p.stage === "done" && lastStage.current !== "done") go("review");
+    lastStage.current = p.stage;
+  }, [p.stage]);
 
   // With nothing running this session, show the last saved scan instead of an empty screen.
   const [last, setLast] = useState<{ scan: ScanRecord; counts: { purge: number; keep: number; review: number } | null } | null>(null);
