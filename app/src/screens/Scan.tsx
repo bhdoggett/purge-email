@@ -22,7 +22,6 @@ function useNow(active: boolean) {
 const STAGE_COPY: Record<string, string> = {
   finding: "Finding old emails…",
   labeling: "Adding labels in Gmail…",
-  trashing: "Moving emails to Trash",
   paused: "Paused",
   signInExpired: "Paused: Google sign-in expired",
   done: "Finished",

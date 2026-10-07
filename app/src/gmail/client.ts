@@ -52,7 +52,6 @@ export interface Gmail {
   findLabelId(name: string): Promise<string | null>;
   addLabel(labelId: string, ids: string[]): Promise<void>;
   removeLabel(labelId: string, ids: string[]): Promise<void>;
-  trash(id: string): Promise<void>;
   getProfile(): Promise<{ emailAddress: string }>;
 }
 
@@ -182,10 +181,6 @@ export function createGmail(opts: GmailOptions): Gmail {
 
     addLabel: (labelId, ids) => modify(labelId, ids, "addLabelIds"),
     removeLabel: (labelId, ids) => modify(labelId, ids, "removeLabelIds"),
-
-    async trash(id) {
-      await call("POST", `/messages/${id}/trash`);
-    },
 
     getProfile: () => call<{ emailAddress: string }>("GET", "/profile"),
   };

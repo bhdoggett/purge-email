@@ -3,23 +3,18 @@ import { useEffect, useState } from "react";
 import type { Settings } from "@core/decide.ts";
 import type { Screen } from "../App.tsx";
 import { Button } from "../components/Button.tsx";
-import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
 import { countByLabel, reconcile, summarize } from "../scan/reconcile.ts";
 import type { Services } from "../services.ts";
 import {
   buildRows,
   gmailLabelUrl,
-  moveAllRows,
   type ReviewRow,
   scanState,
   type ScanState,
   totalOf,
-  trashConfirmBody,
   updateMessage,
 } from "./reviewModel.ts";
 import styles from "./Review.module.css";
-
-type Pending = null | { kind: "trash"; rows: ReviewRow[] } | { kind: "spam" };
 
 interface Loaded {
   settings: Settings;
@@ -36,8 +31,6 @@ function errorText(e: unknown): string {
 export function Review({ services, go }: { services: Services; go: (s: Screen) => void }) {
   const { store, gmail, engine } = services;
   const [data, setData] = useState<Loaded | null>(null);
-  const [spamCount, setSpamCount] = useState<number | null>(null);
-  const [pending, setPending] = useState<Pending>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
@@ -56,7 +49,6 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
         state,
         oldPrefix: state.prefixChanged ? (scan?.settingsAtScan?.labelPrefix ?? null) : null,
       });
-      setSpamCount((await gmail.listIds("in:spam")).length);
       setError(null);
     } catch (e) {
       setError(`Could not load your results from Gmail. ${errorText(e)}`);
@@ -95,19 +87,6 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
     go("scan");
   }
 
-  function confirm() {
-    const job = pending;
-    setPending(null);
-    if (!job || busyBlocked()) return;
-    if (job.kind === "trash") {
-      if (!data) return;
-      void engine.trashLabels(job.rows.map((r) => r.name), data.settings.keepStarred);
-    } else {
-      void engine.emptySpam();
-    }
-    go("scan");
-  }
-
   if (!data) {
     return error ? (
       <section className={styles.review}>
@@ -130,8 +109,6 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
   }
 
   const { settings, rows, state } = data;
-  const all = moveAllRows(rows);
-  const allTotal = totalOf(all);
 
   return (
     <section className={styles.review}>
@@ -168,21 +145,10 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
             </div>
             <div className={styles.rowActions}>
               <Button variant="secondary" onClick={() => void openUrl(gmailLabelUrl(r.name))}>Open in Gmail</Button>
-              <Button variant="danger" disabled={state.rescan} onClick={() => setPending({ kind: "trash", rows: [r] })}>
-                Move {r.count.toLocaleString()} to Trash
-              </Button>
             </div>
           </li>
         ))}
       </ul>
-
-      <div className={styles.moveAll}>
-        <Button variant="danger" disabled={state.rescan || allTotal === 0} onClick={() => setPending({ kind: "trash", rows: all })}>
-          Move all to Trash
-        </Button>
-        <p className={styles.muted}>Moves {allTotal.toLocaleString()} emails from every label above except maybe. Each email moves on its own, so replies in the same thread stay. Trash empties itself after 30 days.</p>
-        {state.rescan && <p className={styles.muted}>Rescan first — your labels were made with different protection or age settings.</p>}
-      </div>
 
       <h2 className={styles.subheading}>Or delete them in Gmail yourself</h2>
       <p className={styles.muted}>Turn off conversation view first, or deleting a thread also deletes newer replies in it.</p>
@@ -192,18 +158,6 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
         <li>Open a label above, select all, and delete.</li>
       </ol>
 
-      <h2 className={styles.subheading}>Spam folder</h2>
-      <p className={styles.muted}>{spamCount === null ? "Counting spam…" : `${spamCount.toLocaleString()} emails in spam.`}</p>
-      <Button variant="secondary" disabled={!spamCount} onClick={() => setPending({ kind: "spam" })}>Empty spam folder</Button>
-
-      <ConfirmDialog
-        open={pending !== null}
-        title={pending?.kind === "spam" ? "Empty the spam folder?" : "Move labeled emails to Trash?"}
-        body={pending?.kind === "spam" ? `${spamCount ?? 0} spam emails will move to Trash.` : pending ? trashConfirmBody(pending.rows, settings.keepStarred) : ""}
-        confirmLabel="Move to Trash"
-        onConfirm={confirm}
-        onCancel={() => setPending(null)}
-      />
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import type { Decision } from "@core/decide.ts";
 
-export type Stage = "idle" | "finding" | "judging" | "labeling" | "trashing" | "paused" | "signInExpired" | "done" | "error";
+export type Stage = "idle" | "finding" | "judging" | "labeling" | "paused" | "signInExpired" | "done" | "error";
 
 export interface FeedItem {
   id: string;
@@ -14,7 +14,7 @@ export interface FeedItem {
 
 export interface Progress {
   stage: Stage;
-  job: "scan" | "trash" | "spam" | null;
+  job: "scan" | null;
   done: number;
   total: number;
   /** `maybe` counts the review decisions that got the maybe label; they are also in `review`. */

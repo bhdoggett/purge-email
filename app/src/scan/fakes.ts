@@ -18,12 +18,11 @@ export function fakeAnswers(kind: Partial<Answers["kind"]>, protect: Partial<Ans
 export interface FakeGmail extends Gmail {
   /** Message id -> label names. The fake uses the label name as the label id. */
   labelsOf: Map<string, Set<string>>;
+  /** Messages the user moved to Trash in Gmail (the app never does). */
   trashed: Set<string>;
   getSummaryCalls: number;
   failIds: Set<string>;
   expireAfter: number | null;
-  spamIds: string[];
-  trashErrors: Map<string, Error>;
   /** Age in years per message, used for `older_than:` queries. Defaults to 20. */
   ages: Map<string, number>;
 }
@@ -38,8 +37,6 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
     getSummaryCalls: 0,
     failIds: new Set(),
     expireAfter: null,
-    spamIds: [],
-    trashErrors: new Map(),
     ages: new Map(),
     async listIds(q, limit = Infinity, opts) {
       let ids: { id: string; threadId: string }[];
@@ -49,7 +46,6 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
           .map(([id]) => ({ id, threadId: id }));
       if (opts?.labelIds) ids = withLabels(opts.labelIds, opts.includeSpamTrash ?? false);
       else if (q.startsWith("in:sent")) ids = [];
-      else if (q === "in:spam") ids = fake.spamIds.map((id) => ({ id, threadId: id }));
       // Text `label:` queries match by name until the engine switches to label ids.
       else if (q.startsWith("label:")) ids = withLabels([/^label:(\S+)/.exec(q)![1]!], q.includes("in:anywhere"));
       else {
@@ -85,11 +81,6 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
     },
     async removeLabel(label, ids) {
       for (const id of ids) fake.labelsOf.get(id)?.delete(label);
-    },
-    async trash(id) {
-      const err = fake.trashErrors.get(id);
-      if (err) throw err;
-      fake.trashed.add(id);
     },
     async getProfile() {
       return { emailAddress: "me@gmail.com" };

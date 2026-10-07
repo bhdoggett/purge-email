@@ -108,24 +108,6 @@ describe("ScanEngine", () => {
     expect(engine.getProgress().stage).toBe("done");
   });
 
-  it("trashes labeled mail message by message, skipping starred", async () => {
-    const { gmail, engine } = await setup([makeSummary("a"), makeSummary("b", { labels: ["STARRED"] })]);
-    gmail.labelsOf.set("a", new Set(["purge-test/promotion"]));
-    gmail.labelsOf.set("b", new Set(["purge-test/promotion"]));
-    const listIds = vi.spyOn(gmail, "listIds");
-    await engine.trashLabels(["purge-test/promotion"], true);
-    expect(listIds).toHaveBeenCalledWith("-is:starred", undefined, { labelIds: ["purge-test/promotion"] });
-    expect([...gmail.trashed]).toEqual(["a"]);
-    expect(engine.getProgress().stage).toBe("done");
-  });
-
-  it("moves spam to trash", async () => {
-    const { gmail, engine } = await setup([]);
-    gmail.spamIds = ["s1", "s2"];
-    await engine.emptySpam();
-    expect([...gmail.trashed]).toEqual(["s1", "s2"]);
-  });
-
   it("stops on a failed label batch: no more work, ids kept, stage error, busy only after settling", async () => {
     const many = Array.from({ length: 6 }, (_, i) => makeSummary(`p${i}`));
     const { gmail, judge, engine, store, notify } = await setup(many, { labelBatch: 1, concurrency: 1 });
@@ -144,29 +126,6 @@ describe("ScanEngine", () => {
     expect(judge).toHaveBeenCalledTimes(judged);
     expect((await store.getScan())?.finished).toBe(false);
     expect(notify).not.toHaveBeenCalled();
-  });
-
-  it("treats a 404 on trash as done and keeps going", async () => {
-    const { gmail, engine } = await setup([makeSummary("a"), makeSummary("b"), makeSummary("c")]);
-    for (const id of ["a", "b", "c"]) gmail.labelsOf.set(id, new Set(["purge-test/promotion"]));
-    gmail.trashErrors.set("b", new GmailError(404, "notFound", "gone"));
-    await engine.trashLabels(["purge-test/promotion"], true);
-    expect([...gmail.trashed].sort()).toEqual(["a", "c"]);
-    const p = engine.getProgress();
-    expect(p.stage).toBe("done");
-    expect(p.done).toBe(3);
-    expect(p.counts.failed).toBe(0);
-  });
-
-  it("counts other trash errors as failed and continues", async () => {
-    const { gmail, engine } = await setup([makeSummary("a"), makeSummary("b")]);
-    gmail.labelsOf.set("a", new Set(["purge-test/promotion"]));
-    gmail.labelsOf.set("b", new Set(["purge-test/promotion"]));
-    gmail.trashErrors.set("a", new Error("nope"));
-    await engine.trashLabels(["purge-test/promotion"], true);
-    expect([...gmail.trashed]).toEqual(["b"]);
-    expect(engine.getProgress().counts.failed).toBe(1);
-    expect(engine.getProgress().stage).toBe("done");
   });
 
   it("stops the scan as error when Jev rejects the credentials", async () => {
@@ -266,20 +225,6 @@ describe("ScanEngine", () => {
     expect(judge.mock.calls.length).toBeLessThanOrEqual(4);
   });
 
-  it("stops trashing as error after 20 consecutive per-message failures", async () => {
-    const many = Array.from({ length: 40 }, (_, i) => makeSummary(`p${i}`));
-    const { gmail, engine, notify } = await setup(many);
-    for (const m of many) {
-      gmail.labelsOf.set(m.id, new Set(["purge-test/promotion"]));
-      gmail.trashErrors.set(m.id, new Error("nope"));
-    }
-    await engine.trashLabels(["purge-test/promotion"], true);
-    const p = engine.getProgress();
-    expect(p.stage).toBe("error");
-    expect((p.error as Error).message).toBe("nope");
-    expect(p.counts.failed).toBeLessThan(40);
-    expect(notify).not.toHaveBeenCalled();
-  });
   describe("category labels", () => {
     const T = { ...DEFAULT_SETTINGS, labelPrefix: "purge-test" };
 
@@ -376,46 +321,6 @@ describe("ScanEngine", () => {
       await store.putScan({ years: T.years, candidateIds: ["stale"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });
       await engine.start(T);
       expect((await store.getScan())?.candidateIds).toEqual(["promo"]);
-    });
-
-    describe("trashLabels", () => {
-      async function labeled() {
-        const s = await setup([makeSummary("n1"), makeSummary("p1"), makeSummary("p2", { labels: ["STARRED"] })]);
-        s.gmail.labelsOf.set("n1", new Set(["p/newsletter"]));
-        s.gmail.labelsOf.set("p1", new Set(["p/promotion"]));
-        s.gmail.labelsOf.set("p2", new Set(["p/promotion"]));
-        return s;
-      }
-
-      it("skips starred mail when keepStarred", async () => {
-        const { gmail, engine } = await labeled();
-        await engine.trashLabels(["p/promotion"], true);
-        expect([...gmail.trashed]).toEqual(["p1"]);
-      });
-
-      it("trashes starred mail when not keepStarred", async () => {
-        const { gmail, engine } = await labeled();
-        await engine.trashLabels(["p/promotion"], false);
-        expect([...gmail.trashed].sort()).toEqual(["p1", "p2"]);
-      });
-
-      it("trashes every listed label once each and skips labels Gmail doesn't have", async () => {
-        const { gmail, engine } = await labeled();
-        const trash = vi.spyOn(gmail, "trash");
-        await engine.trashLabels(["p/newsletter", "p/promotion", "p/missing"], true);
-        expect([...gmail.trashed].sort()).toEqual(["n1", "p1"]);
-        expect(trash).toHaveBeenCalledTimes(2);
-        expect(engine.getProgress().stage).toBe("done");
-        expect(engine.getProgress().total).toBe(2);
-      });
-
-      it("trashes an id carrying two listed labels once", async () => {
-        const { gmail, engine } = await labeled();
-        gmail.labelsOf.set("p1", new Set(["p/promotion", "p/newsletter"]));
-        const trash = vi.spyOn(gmail, "trash");
-        await engine.trashLabels(["p/newsletter", "p/promotion"], true);
-        expect(trash).toHaveBeenCalledTimes(2);
-      });
     });
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "@core/decide.ts";
-import { buildRows, gmailLabelUrl, moveAllRows, scanState, totalOf, trashConfirmBody, updateMessage } from "./reviewModel.ts";
+import { buildRows, gmailLabelUrl, scanState, totalOf, updateMessage } from "./reviewModel.ts";
 
 const S = { ...DEFAULT_SETTINGS, labelPrefix: "purge" };
 
@@ -11,10 +11,8 @@ describe("reviewModel", () => {
     expect(buildRows(counts, "purge").map((r) => r.name)).toEqual(["purge/newsletter", "purge/shipping", "purge/maybe"]);
   });
 
-  it("totals all rows but Move all leaves out maybe", () => {
-    const rows = buildRows(counts, "purge");
-    expect(totalOf(rows)).toBe(11);
-    expect(moveAllRows(rows).map((r) => r.name)).toEqual(["purge/newsletter", "purge/shipping"]);
+  it("totals all rows", () => {
+    expect(totalOf(buildRows(counts, "purge"))).toBe(11);
   });
 
   it("flags rescan, changed and prefixChanged", () => {
@@ -26,14 +24,8 @@ describe("reviewModel", () => {
     expect(scanState({ settingsAtScan: S }, { ...S, labelPrefix: "x" })).toEqual({ rescan: false, changed: true, prefixChanged: true });
   });
 
-  it("builds the Gmail link and confirm text", () => {
+  it("builds the Gmail link", () => {
     expect(gmailLabelUrl("my box/maybe")).toBe("https://mail.google.com/mail/u/0/#label/my%20box%2Fmaybe");
-    const rows = buildRows(counts, "purge").slice(0, 2);
-    const kept = trashConfirmBody(rows, true);
-    expect(kept).toContain("purge/newsletter: 5");
-    expect(kept).toContain("7 emails in total");
-    expect(kept).toContain("Starred emails are skipped.");
-    expect(trashConfirmBody(rows, false)).toContain("Includes starred emails.");
   });
 
   it("appends the old-label note only when the prefix changed", () => {

@@ -26,6 +26,26 @@ pub fn parse_allowed(raw: &str) -> Result<(Service, url::Url), AppError> {
     }
 }
 
+/// The app only labels mail. Refuses any Gmail request that would trash, spam or delete it.
+pub fn refuse_destructive_gmail(method: &str, url: &url::Url, body: Option<&str>) -> Result<(), AppError> {
+    let refuse = || AppError::Invalid("The app never trashes or deletes email.".to_string());
+    if method.eq_ignore_ascii_case("DELETE") {
+        return Err(refuse());
+    }
+    let last = url.path_segments().and_then(|mut s| s.next_back()).unwrap_or("");
+    if ["trash", "batchDelete"].contains(&last) {
+        return Err(refuse());
+    }
+    if let Some(body) = body {
+        let json: serde_json::Value = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+        let adds = json.get("addLabelIds").and_then(|v| v.as_array());
+        if adds.is_some_and(|ids| ids.iter().any(|id| matches!(id.as_str(), Some("TRASH") | Some("SPAM")))) {
+            return Err(refuse());
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn check_url(raw: &str) -> Result<Service, AppError> {
     parse_allowed(raw).map(|(s, _)| s)
@@ -50,6 +70,9 @@ pub struct ApiResponse {
 pub async fn api_request(req: ApiRequest, cache: tauri::State<'_, TokenCache>) -> Result<ApiResponse, AppError> {
     let (service, url) = parse_allowed(&req.url)?;
     let method = reqwest::Method::from_bytes(req.method.as_bytes()).map_err(|e| AppError::Invalid(e.to_string()))?;
+    if service == Service::Gmail {
+        refuse_destructive_gmail(&req.method, &url, req.body.as_deref())?;
+    }
 
     // Gmail gets one retry with a forced token refresh after a 401.
     for attempt in 0..2 {
@@ -106,5 +129,23 @@ mod tests {
         ] {
             assert!(matches!(check_url(url), Err(AppError::HostNotAllowed(_))), "{url}");
         }
+    }
+
+    #[test]
+    fn refuses_gmail_trash_and_delete() {
+        let base = "https://gmail.googleapis.com/gmail/v1/users/me";
+        let url = |p: &str| url::Url::parse(&format!("{base}{p}")).unwrap();
+        let refused = |m: &str, p: &str, b: Option<&str>| matches!(refuse_destructive_gmail(m, &url(p), b), Err(AppError::Invalid(_)));
+        assert!(refused("POST", "/messages/abc/trash", None));
+        assert!(refused("POST", "/threads/abc/trash", None));
+        assert!(refused("DELETE", "/messages/abc", None));
+        assert!(refused("POST", "/messages/batchDelete", Some(r#"{"ids":["a"]}"#)));
+        assert!(refused("POST", "/messages/batchModify", Some(r#"{"ids":["a"],"addLabelIds":["TRASH"]}"#)));
+        assert!(refused("POST", "/messages/batchModify", Some(r#"{"ids":["a"],"addLabelIds":["SPAM"]}"#)));
+
+        assert!(!refused("POST", "/messages/batchModify", Some(r#"{"ids":["a"],"addLabelIds":["Label_1"]}"#)));
+        assert!(!refused("POST", "/messages/batchModify", Some(r#"{"ids":["a"],"removeLabelIds":["Label_1"]}"#)));
+        assert!(!refused("GET", "/messages?q=older_than%3A10y", None));
+        assert!(!refused("POST", "/labels", Some(r#"{"name":"purge"}"#)));
     }
 }

@@ -88,7 +88,7 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
           <Checkbox label="Emails with attachments" checked={settings.keepAttachments} onChange={(on) => update({ keepAttachments: on })} />
           {!settings.keepAttachments && <p className={styles.choiceNote}>Jev will also judge these. File names are sent, never the files.</p>}
           <Checkbox label="Starred emails" checked={settings.keepStarred} onChange={(on) => update({ keepStarred: on })} />
-          {!settings.keepStarred && <p className={styles.choiceNote}>Starred emails can be labeled and trashed.</p>}
+          {!settings.keepStarred && <p className={styles.choiceNote}>Starred emails can be labeled too.</p>}
         </fieldset>
       </div>
 

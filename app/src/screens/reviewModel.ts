@@ -26,9 +26,6 @@ export function buildRows(counts: Map<string, number>, prefix: string): ReviewRo
 
 export const totalOf = (rows: ReviewRow[]): number => rows.reduce((n, r) => n + r.count, 0);
 
-/** The rows Move all covers: every kind label, never maybe. */
-export const moveAllRows = (rows: ReviewRow[]): ReviewRow[] => rows.filter((r) => !r.isMaybe);
-
 export interface ScanState {
   rescan: boolean;
   changed: boolean;
@@ -44,12 +41,6 @@ export function scanState(scan: Pick<ScanRecord, "settingsAtScan"> | null, setti
 
 export function gmailLabelUrl(name: string): string {
   return `https://mail.google.com/mail/u/0/#label/${encodeURIComponent(name)}`;
-}
-
-export function trashConfirmBody(rows: ReviewRow[], keepStarred: boolean): string {
-  const lines = rows.map((r) => `${r.name}: ${r.count.toLocaleString()}`).join("\n");
-  const starred = keepStarred ? "Starred emails are skipped." : "Includes starred emails.";
-  return `${lines}\n${totalOf(rows).toLocaleString()} emails in total will move to Trash. ${starred} You can restore them from Trash for 30 days.`;
 }
 
 export function updateMessage(r: { moved: number; added: number; removed: number }, oldPrefix: string | null): string {
