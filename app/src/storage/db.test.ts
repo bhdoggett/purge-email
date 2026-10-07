@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS } from "@core/decide.ts";
 import { QUESTIONS_VERSION } from "@core/questions.ts";
+import { openDB } from "idb";
 import { openStore } from "./db.ts";
 
 const summary = { id: "m1", threadId: "t1", from: "a", to: "b", cc: "", subject: "s", date: "d", snippet: "x", labels: [], hasListUnsubscribe: false, attachmentNames: [] };
@@ -14,14 +15,14 @@ describe("store", () => {
 
     await store.putSummary(summary);
     await store.putAnswers("m1", answers);
-    await store.putLabels([{ id: "m1", labeledByApp: true, userRemoved: false }]);
+    await store.putLabels([{ id: "m1", label: "purge/promotion", labeledAt: 5, userRemoved: false, userChosen: false }]);
     await store.putSettings({ ...DEFAULT_SETTINGS, years: 8 });
     await store.putScan({ years: 8, candidateIds: ["m1"], repliedThreadIds: [], finished: false, startedAt: 1, settingsAtScan: null, msPerEmail: null });
     await store.putWizard([1, 2]);
 
     expect(await store.getSummary("m1")).toEqual(summary);
     expect((await store.allAnswers()).get("m1")).toEqual(answers);
-    expect((await store.allLabels()).get("m1")?.labeledByApp).toBe(true);
+    expect((await store.allLabels()).get("m1")?.label).toBe("purge/promotion");
     expect((await store.getSettings()).years).toBe(8);
     expect((await store.getScan())?.candidateIds).toEqual(["m1"]);
     expect(await store.getWizard()).toEqual([1, 2]);
@@ -34,7 +35,7 @@ describe("store", () => {
     const store = await openStore(`t-${crypto.randomUUID()}`);
     await store.putSummary(summary);
     await store.putAnswers("m1", answers);
-    await store.putLabels([{ id: "m1", labeledByApp: true, userRemoved: true }]);
+    await store.putLabels([{ id: "m1", label: "purge/promotion", labeledAt: 5, userRemoved: true, userChosen: false }]);
     await store.putSettings({ ...DEFAULT_SETTINGS, years: 7 });
     await store.putWizard([1]);
     await store.clearScanData();
@@ -44,5 +45,38 @@ describe("store", () => {
     expect((await store.allLabels()).get("m1")?.userRemoved).toBe(true);
     expect((await store.getSettings()).years).toBe(7);
     expect(await store.getWizard()).toEqual([1]);
+  });
+
+  it("fills settings missing from older stored records with defaults", async () => {
+    const store = await openStore(`t-${crypto.randomUUID()}`);
+    await store.putSettings({ purgeKinds: ["scam"], protects: [], years: 10, strictness: "balanced" } as never);
+    const s = await store.getSettings();
+    expect(s.purgeKinds).toEqual(["scam"]);
+    expect(s.labelPrefix).toBe(DEFAULT_SETTINGS.labelPrefix);
+    expect(s.keepAttachments).toBe(DEFAULT_SETTINGS.keepAttachments);
+    expect(s.keepStarred).toBe(DEFAULT_SETTINGS.keepStarred);
+  });
+
+  it("uses the supplied defaults when nothing is stored", async () => {
+    const store = await openStore(`t-${crypto.randomUUID()}`, { ...DEFAULT_SETTINGS, labelPrefix: "purge-test" });
+    expect((await store.getSettings()).labelPrefix).toBe("purge-test");
+  });
+
+  it("upgrades v1 to v2 by clearing old label records and keeping summaries", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const old = await openDB(name, 1, {
+      upgrade(db) {
+        db.createObjectStore("summaries", { keyPath: "id" });
+        db.createObjectStore("answers");
+        db.createObjectStore("labels", { keyPath: "id" });
+        db.createObjectStore("kv");
+      },
+    });
+    await old.put("summaries", summary);
+    await old.put("labels", { id: "m1", labeledByApp: true, userRemoved: false });
+    old.close();
+    const store = await openStore(name);
+    expect((await store.allLabels()).size).toBe(0);
+    expect(await store.getSummary("m1")).toEqual(summary);
   });
 });

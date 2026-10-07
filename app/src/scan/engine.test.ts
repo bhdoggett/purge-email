@@ -28,7 +28,7 @@ describe("ScanEngine", () => {
     expect(idsWithLabel(gmail, "purge-test")).toEqual(["promo"]);
     expect(judge).toHaveBeenCalledTimes(2);
     expect(p.costUsd).toBeCloseTo((2 * 1000 * 0.042) / 1_000_000);
-    expect((await store.allLabels()).get("promo")?.labeledByApp).toBe(true);
+    expect((await store.allLabels()).get("promo")?.label).toBe("purge-test");
     expect((await store.getScan())?.finished).toBe(true);
     expect((await store.getScan())?.settingsAtScan).toEqual(DEFAULT_SETTINGS);
     expect(p.recent[0]?.id).toBeDefined();
@@ -79,7 +79,7 @@ describe("ScanEngine", () => {
 
   it("does not re-add a label to an email already recorded as labeled", async () => {
     const { gmail, engine, store } = await setup();
-    await store.putLabels([{ id: "promo", labeledByApp: true, userRemoved: true }]);
+    await store.putLabels([{ id: "promo", label: "purge", labeledAt: 0, userRemoved: true, userChosen: false }]);
     await engine.start(DEFAULT_SETTINGS);
     expect(idsWithLabel(gmail, "purge-test").includes("promo")).toBe(false);
   });

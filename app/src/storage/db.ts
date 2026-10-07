@@ -5,8 +5,10 @@ import type { Summary } from "../gmail/client.ts";
 
 export interface LabelRecord {
   id: string;
-  labeledByApp: true;
+  label: string;
+  labeledAt: number;
   userRemoved: boolean;
+  userChosen: boolean;
 }
 
 export interface ScanRecord {
@@ -48,13 +50,18 @@ export interface Store {
   clearScanData(): Promise<void>;
 }
 
-export async function openStore(name = "purge-email"): Promise<Store> {
-  const db = await openDB<PurgeDB>(name, 1, {
-    upgrade(db) {
-      db.createObjectStore("summaries", { keyPath: "id" });
-      db.createObjectStore("answers");
-      db.createObjectStore("labels", { keyPath: "id" });
-      db.createObjectStore("kv");
+export async function openStore(name = "purge-email", defaults: Settings = DEFAULT_SETTINGS): Promise<Store> {
+  const db = await openDB<PurgeDB>(name, 2, {
+    async upgrade(db, oldVersion, _newVersion, tx) {
+      if (oldVersion < 1) {
+        db.createObjectStore("summaries", { keyPath: "id" });
+        db.createObjectStore("answers");
+        db.createObjectStore("labels", { keyPath: "id" });
+        db.createObjectStore("kv");
+      } else if (oldVersion < 2) {
+        // v1 records have no `label`; they only exist from development, so drop them.
+        await tx.objectStore("labels").clear();
+      }
     },
   });
 
@@ -83,7 +90,7 @@ export async function openStore(name = "purge-email"): Promise<Store> {
       const tx = db.transaction("labels", "readwrite");
       await Promise.all([...ids.map((id) => tx.store.delete(id)), tx.done]);
     },
-    getSettings: async () => ((await db.get("kv", "settings")) as Settings | undefined) ?? DEFAULT_SETTINGS,
+    getSettings: async () => ({ ...defaults, ...((await db.get("kv", "settings")) as Partial<Settings> | undefined) }),
     putSettings: async (s) => void (await db.put("kv", s, "settings")),
     getScan: async () => ((await db.get("kv", "scan")) as ScanRecord | undefined) ?? null,
     putScan: async (s) => void (await db.put("kv", s, "scan")),

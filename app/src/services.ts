@@ -3,9 +3,10 @@ import { proxyFetch } from "./bridge/proxyFetch.ts";
 import { createGmail, type Gmail } from "./gmail/client.ts";
 import { createJudge } from "./jev/client.ts";
 import { ScanEngine } from "./scan/engine.ts";
+import { DEFAULT_SETTINGS } from "@core/decide.ts";
 import { openStore, type Store } from "./storage/db.ts";
 
-export const LABEL_NAME = import.meta.env.VITE_PURGE_LABEL ?? "purge";
+const DEFAULT_PREFIX = import.meta.env.VITE_PURGE_LABEL ?? "purge";
 
 export interface Services {
   store: Store;
@@ -29,11 +30,11 @@ let services: Promise<Services> | null = null;
 
 export function getServices(): Promise<Services> {
   services ??= (async () => {
-    const store = await openStore();
+    const store = await openStore(undefined, { ...DEFAULT_SETTINGS, labelPrefix: DEFAULT_PREFIX });
     let engine: ScanEngine | undefined;
     const gmail = createGmail({ fetch: proxyFetch, onRateLimit: (ms) => engine?.noteRateLimit(ms) });
-    engine = new ScanEngine({ gmail, judge: createJudge(), store, labelName: LABEL_NAME, notify: (t, b) => void notify(t, b) });
-    return { store, gmail, engine, labelName: LABEL_NAME };
+    engine = new ScanEngine({ gmail, judge: createJudge(), store, labelName: DEFAULT_PREFIX, notify: (t, b) => void notify(t, b) });
+    return { store, gmail, engine, labelName: DEFAULT_PREFIX };
   })();
   services.catch(() => {
     services = null;

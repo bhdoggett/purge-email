@@ -14,7 +14,7 @@ async function seeded() {
   await store.putAnswers("removed", fakeAnswers({ promotion: 0.95 }));
   await store.putScan({ years: 10, candidateIds: ["news", "promo", "removed"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
   // The app labeled all three; the user removed the label from "removed" in Gmail.
-  await store.putLabels(["news", "promo", "removed"].map((id) => ({ id, labeledByApp: true as const, userRemoved: false })));
+  await store.putLabels(["news", "promo", "removed"].map((id) => ({ id, label: "purge", labeledAt: 0, userRemoved: false, userChosen: false })));
   gmail.labelsOf.set("news", new Set(["purge-test"]));
   gmail.labelsOf.set("promo", new Set(["purge-test"]));
   return { store, gmail };

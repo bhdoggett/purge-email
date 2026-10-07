@@ -131,7 +131,7 @@ export class ScanEngine {
         const ids = pending.splice(0);
         try {
           await gmail.addLabel(labelId, ids);
-          await store.putLabels(ids.map((id): LabelRecord => ({ id, labeledByApp: true, userRemoved: false })));
+          await store.putLabels(ids.map((id): LabelRecord => ({ id, label: labelName, labeledAt: this.now(), userRemoved: false, userChosen: false })));
         } catch (err) {
           pending.unshift(...ids);
           throw err;
@@ -187,7 +187,7 @@ export class ScanEngine {
               settings,
             );
             if (decision === "purge" && !labels.has(id)) {
-              labels.set(id, { id, labeledByApp: true, userRemoved: false });
+              labels.set(id, { id, label: labelName, labeledAt: this.now(), userRemoved: false, userChosen: false });
               pending.push(id);
               if (pending.length >= labelBatch) {
                 try {

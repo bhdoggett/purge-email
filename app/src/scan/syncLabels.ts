@@ -47,7 +47,7 @@ export async function syncLabels(deps: { gmail: Gmail; store: Store; labelName: 
 
   let userRemoved = 0;
   for (const rec of labels.values()) {
-    if (rec.labeledByApp && !rec.userRemoved && !anywhere.has(rec.id)) {
+    if (!rec.userRemoved && !anywhere.has(rec.id)) {
       rec.userRemoved = true;
       userRemoved++;
     }
@@ -62,12 +62,12 @@ export async function syncLabels(deps: { gmail: Gmail; store: Store; labelName: 
     if (decision !== "purge" && live.has(id)) toRemove.add(id);
   }
   for (const rec of labels.values()) {
-    if (rec.labeledByApp && !rec.userRemoved && live.has(rec.id) && decided.get(rec.id) !== "purge") toRemove.add(rec.id);
+    if (!rec.userRemoved && live.has(rec.id) && decided.get(rec.id) !== "purge") toRemove.add(rec.id);
   }
 
   await gmail.addLabel(labelId, toAdd);
   await gmail.removeLabel(labelId, [...toRemove]);
-  for (const id of toAdd) labels.set(id, { id, labeledByApp: true, userRemoved: false });
+  for (const id of toAdd) labels.set(id, { id, label: labelName, labeledAt: Date.now(), userRemoved: false, userChosen: false });
   // The app took these labels off itself, so forget them: a later purge decision may label them again.
   for (const id of toRemove) labels.delete(id);
   await store.deleteLabels([...toRemove]);
