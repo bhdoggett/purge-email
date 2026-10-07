@@ -31,6 +31,7 @@ function input(answers: Record<string, Answers>, rest: Partial<ReconcileInput> =
     records: new Map(),
     anywhere: new Map(),
     live: new Set(),
+    overrides: new Map(),
     ...rest,
   };
 }
@@ -267,6 +268,74 @@ describe("planReconcile", () => {
   });
 });
 
+describe("planReconcile with overrides", () => {
+  const promo = fakeAnswers({ promotion: 0.97 });
+  const ov = (id: string, slug: string | null, at = NOW - 1) => new Map([[id, { id, slug, at }]]);
+
+  it("adds the override's label to an email Jev kept", () => {
+    const plan = planReconcile(input({ a: fakeAnswers({ none: 1 }) }, { overrides: ov("a", "promotion") }));
+    expect(plan.add.get("purge/promotion")).toEqual(["a"]);
+  });
+
+  it("moves an email to the override's label", () => {
+    const plan = planReconcile(input({ a: promo }, { ...labeled({ a: "purge/promotion" }), records: new Map([["a", rec("a", "purge/promotion")]]), overrides: ov("a", "maybe") }));
+    expect(plan.remove.get("purge/promotion")).toEqual(["a"]);
+    expect(plan.add.get("purge/maybe")).toEqual(["a"]);
+  });
+
+  it("removes the label for a keep override", () => {
+    const plan = planReconcile(input({ a: promo }, { ...labeled({ a: "purge/promotion" }), records: new Map([["a", rec("a", "purge/promotion")]]), overrides: ov("a", null) }));
+    expect(plan.remove.get("purge/promotion")).toEqual(["a"]);
+    expect(plan.del).toEqual(["a"]);
+  });
+
+  it("an override newer than a user removal wins and resets the flags", () => {
+    const records = new Map([["a", rec("a", "purge/promotion", { userRemoved: true })]]);
+    const plan = planReconcile(input({ a: promo }, { records, overrides: ov("a", "promotion", OLD + 1) }));
+    expect(plan.add.get("purge/promotion")).toEqual(["a"]);
+    expect(plan.put).toContainEqual({ id: "a", label: "purge/promotion", labeledAt: NOW, userRemoved: false, userChosen: false });
+    expect(plan.userRemoved).toBe(0);
+  });
+
+  it("an override newer than a user's Gmail move wins", () => {
+    const records = new Map([["a", rec("a", "purge/social", { userChosen: true })]]);
+    const plan = planReconcile(input({ a: promo }, { ...labeled({ a: "purge/social" }), records, overrides: ov("a", "work", OLD + 1) }));
+    expect(plan.remove.get("purge/social")).toEqual(["a"]);
+    expect(plan.add.get("purge/work")).toEqual(["a"]);
+  });
+
+  it("a Gmail change made after the override wins", () => {
+    // Applied at OLD (after the override at OLD - 1), then the user removed the label in Gmail.
+    const records = new Map([["a", rec("a", "purge/work")]]);
+    const plan = planReconcile(input({ a: promo }, { records, overrides: ov("a", "work", OLD - 1) }));
+    expect(plan.userRemoved).toBe(1);
+    expect(plan.add.size).toBe(0);
+  });
+
+  it("does not claim an unrecorded app label as the user's when an override exists", () => {
+    const plan = planReconcile(input({ a: promo }, { ...labeled({ a: "purge/social" }), overrides: ov("a", "work") }));
+    expect(plan.remove.get("purge/social")).toEqual(["a"]);
+    expect(plan.add.get("purge/work")).toEqual(["a"]);
+    expect(plan.put.some((r) => r.userChosen)).toBe(false);
+  });
+
+  it("moves overridden emails to the new prefix", () => {
+    const settings = { ...DEFAULT_SETTINGS, labelPrefix: "new" };
+    const plan = planReconcile(input({ a: promo }, { settings, ...labeled({ a: "purge/work" }), records: new Map([["a", rec("a", "purge/work")]]), overrides: ov("a", "work", OLD - 1) }));
+    expect(plan.remove.get("purge/work")).toEqual(["a"]);
+    expect(plan.add.get("new/work")).toEqual(["a"]);
+  });
+
+  it("ignores an override for an id that is not a candidate", () => {
+    expect(empty(planReconcile(input({}, { overrides: ov("gone", "promotion") })))).toBe(true);
+  });
+
+  it("never touches an overridden email in Trash or Spam", () => {
+    const plan = planReconcile(input({ a: promo }, { anywhere: new Map([["a", "purge/promotion"]]), live: new Set(), records: new Map([["a", rec("a", "purge/promotion")]]), overrides: ov("a", null) }));
+    expect(plan.remove.size).toBe(0);
+  });
+});
+
 describe("reconcile", () => {
   it("moves labels in Gmail to match changed purge kinds and saves the records", async () => {
     const store = await openStore(`t-${crypto.randomUUID()}`);
@@ -441,6 +510,20 @@ describe("summarize", () => {
     await store.putScan({ years: 10, candidateIds: ["s"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
     expect(await summarize(store, DEFAULT_SETTINGS)).toEqual({ purge: 0, keep: 1, review: 0 });
     expect(await summarize(store, { ...DEFAULT_SETTINGS, keepStarred: false })).toEqual({ purge: 1, keep: 0, review: 0 });
+  });
+
+  it("counts overrides by their label: no label is keep, maybe is review, any other is purge", async () => {
+    const store = await openStore(`t-${crypto.randomUUID()}`);
+    for (const id of ["a", "b", "c"]) {
+      await store.putSummary(makeSummary(id));
+      await store.putAnswers(id, fakeAnswers({ promotion: 0.95 }));
+    }
+    await store.putScan({ years: 10, candidateIds: ["a", "b", "c"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
+    await store.putOverrideList([
+      { id: "a", slug: null, at: 1 },
+      { id: "b", slug: "maybe", at: 1 },
+    ]);
+    expect(await summarize(store, DEFAULT_SETTINGS)).toEqual({ purge: 1, keep: 1, review: 1 });
   });
 });
 

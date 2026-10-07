@@ -1,9 +1,10 @@
-import { decide, type Settings } from "@core/decide.ts";
-import { appLabelNames, labelFor } from "@core/labels.ts";
+import type { Settings } from "@core/decide.ts";
+import { appLabelNames } from "@core/labels.ts";
 import type { Answers } from "@core/questions.ts";
 import { AppError } from "../bridge/errors.ts";
 import { type Gmail, GmailError, type Summary } from "../gmail/client.ts";
-import type { LabelRecord, Store } from "../storage/db.ts";
+import type { LabelRecord, Override, Store } from "../storage/db.ts";
+import { effectiveLabel } from "./effective.ts";
 
 /** Gmail's lists can lag behind label changes; a record younger than this is never read as a user change. */
 export const USER_CHANGE_GRACE_MS = 600_000;
@@ -19,6 +20,8 @@ export interface ReconcileInput {
   anywhere: Map<string, string>;
   /** ids carrying an app label outside Trash and Spam. */
   live: Set<string>;
+  /** The user's choices from the Review screen. */
+  overrides: Map<string, Override>;
 }
 
 export interface ReconcilePlan {
@@ -54,18 +57,17 @@ export function settingsEqual(a: Settings, b: Settings): boolean {
   return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
 }
 
-function decisionOf(summary: Summary, answers: Answers | null, settings: Settings) {
-  return decide({ starred: summary.labels.includes("STARRED"), attachmentCount: summary.attachmentNames.length }, answers, settings).decision;
-}
-
 export async function summarize(store: Store, settings: Settings): Promise<{ purge: number; keep: number; review: number }> {
   const scan = await store.getScan();
   const summaries = await store.allSummaries();
   const answers = await store.allAnswers();
+  const overrides = await store.allOverrides();
   const counts = { purge: 0, keep: 0, review: 0 };
   for (const id of scan?.candidateIds ?? []) {
     const s = summaries.get(id);
-    if (s) counts[decisionOf(s, answers.get(id) ?? null, settings)]++;
+    if (!s) continue;
+    const e = effectiveLabel(s, answers.get(id) ?? null, overrides.get(id), settings);
+    counts[e.source === "override" ? (e.label === null ? "keep" : e.label.endsWith("/maybe") ? "review" : "purge") : e.decision]++;
   }
   return counts;
 }
@@ -81,15 +83,18 @@ function push(map: Map<string, string[]>, key: string, id: string) {
  * anything the user changed by hand, any app-named label the app has no record of, or anything
  * in Trash or Spam. Inside the grace window it only acts when Gmail's lists confirm the recorded
  * label; otherwise it defers, so it never undoes a change the user just made.
+ * An override newer than the app's last label on an email beats the user's earlier Gmail change.
  */
 export function planReconcile(i: ReconcileInput): ReconcilePlan {
   const plan: ReconcilePlan = { add: new Map(), remove: new Map(), put: [], del: [], userRemoved: 0, userChosen: 0, deferred: 0 };
   const records = new Map(i.records);
   const inGrace = (r: LabelRecord) => i.now - r.labeledAt < USER_CHANGE_GRACE_MS;
+  /** An override made after the app last labeled this email beats any change the user made in Gmail before it. */
+  const overrideWins = (r: LabelRecord) => (i.overrides.get(r.id)?.at ?? -Infinity) > r.labeledAt;
 
   // 1. Detect user changes on records old enough for Gmail's lists to be trusted.
   for (const r of i.records.values()) {
-    if (r.userRemoved || inGrace(r)) continue;
+    if (r.userRemoved || inGrace(r) || overrideWins(r)) continue;
     const seen = i.anywhere.get(r.id);
     let changed: LabelRecord | null = null;
     if (seen === undefined) {
@@ -107,7 +112,7 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
 
   // 2. An app-named label the app has no record of may be the user's own: record it as theirs and never touch it.
   for (const id of i.live) {
-    if (records.has(id)) continue;
+    if (records.has(id) || i.overrides.has(id)) continue;
     const r: LabelRecord = { id, label: i.anywhere.get(id)!, labeledAt: i.now, userRemoved: false, userChosen: true };
     records.set(id, r);
     plan.put.push(r);
@@ -118,14 +123,14 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
   for (const id of i.candidates) {
     const s = i.summaries.get(id);
     const answers = i.answers.get(id) ?? null;
-    desired.set(id, s ? labelFor(decisionOf(s, answers, i.settings), answers, i.settings) : null);
+    desired.set(id, s ? effectiveLabel(s, answers, i.overrides.get(id), i.settings).label : null);
   }
 
   // 4. Apply to live, candidate and just-labeled ids the user hasn't taken over.
   const recent = [...records.values()].filter((r) => inGrace(r)).map((r) => r.id);
   for (const id of new Set([...i.candidates, ...i.live, ...recent])) {
     const r = records.get(id);
-    if (r?.userRemoved || r?.userChosen) continue;
+    if (r && (r.userRemoved || r.userChosen) && !overrideWins(r)) continue;
     const isLive = i.live.has(id);
     // In Trash or Spam: never changed.
     if (!isLive && i.anywhere.has(id)) continue;
@@ -194,6 +199,7 @@ export async function reconcile(
     records,
     anywhere,
     live,
+    overrides: await store.allOverrides(),
   });
 
   // Add before remove: if this stops halfway, an email has two labels rather than none.
