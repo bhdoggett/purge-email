@@ -10,7 +10,10 @@ Like the CLI, the app doesn't delete anything at first. Instead, it adds a Gmail
 
 - Node.js and npm (development builds)
 - macOS (Tauri app currently targets macOS)
-- A Google Cloud project with Gmail API enabled and OAuth credentials
+- A TypeSafe/Jev API key (for judging messages)
+- A Google account and a web browser (for Gmail and Google Cloud setup)
+
+The setup wizard will walk you through creating a Google Cloud project and enabling the Gmail API.
 
 ### Installation
 
@@ -26,16 +29,23 @@ Like the CLI, the app doesn't delete anything at first. Instead, it adds a Gmail
 
    This opens the app in a window. During development, it uses the `purge-test` label to avoid interfering with production labels.
 
-### Credentials
+### Setup Wizard
 
-The app stores your Gmail OAuth credentials securely in the macOS Keychain under the service name `dev.purge-email`. When you first run the app, a setup wizard will ask you to sign in with your Google account and configure your settings. No `.env` file is needed for the app — all configuration happens through the in-app setup wizard.
+When you first run the app, a 6-step setup wizard walks you through the process:
 
-**Note:** Your Google Cloud project must be in Testing mode, with your email address added as a test user. In Testing mode, Google sign-in expires every 7 days, so the app will periodically ask you to sign in again.
+1. **Add your Jev key**: Create an API key on the TypeSafe dashboard and paste it into the app. The app tests it with a tiny request (under a cent).
+2. **Create a Google Cloud project**: Go to Google Cloud and create a new project (any name works, like "Purge Email").
+3. **Turn on the Gmail API**: Enable the Gmail API for your project. It takes a minute or two to take effect.
+4. **Add yourself as a test user**: Go to Google Auth Platform, make sure your project is in Testing mode, and add your Gmail address as a test user.
+5. **Create a Desktop OAuth client**: Create OAuth credentials (type: Desktop app) in Google Cloud and paste the client ID and secret into the app.
+6. **Sign in with Google**: The app opens a browser and asks you to approve access to your Gmail account. Your OAuth credentials are saved to the macOS Keychain.
+
+**Important:** Your Google Cloud project must stay in Testing mode. In Testing mode, Google sign-in expires every 7 days, so the app will periodically ask you to sign in again. All credentials are stored securely in the macOS Keychain under the service name `dev.purge-email`. No `.env` file is needed.
 
 ### Development vs. Release Labels
 
-- **Development mode** (when running `npm run tauri dev`): uses the `purge-test` label (configured in `.env.development`)
-- **Release builds** (signed apps distributed to users): uses the `purge` label
+- **Development mode** (when running `npm run tauri dev`): uses the `VITE_PURGE_LABEL` variable from `app/.env.development`, which defaults to `purge-test`
+- **Release builds**: falls back to `purge` when the variable is not set
 
 This keeps development scans separate from production.
 
@@ -51,12 +61,12 @@ npm test
 npm run typecheck
 
 # Rust backend tests
-cd src-tauri && cargo test
+(cd src-tauri && cargo test)
 ```
 
 ## Building for macOS
 
-To create a signed or unsigned release build:
+To create a release build:
 
 ```bash
 npm run tauri build
@@ -64,28 +74,38 @@ npm run tauri build
 
 This produces an unsigned `.app` bundle. macOS will ask you to allow it in System Settings → Privacy & Security the first time you run it.
 
-## What the App Does
+## How It Works
 
-The app walks through a setup wizard where you:
+The app has four main screens:
 
-1. Sign in with your Google account (OAuth)
-2. Configure how aggressive the deletion rules should be (Careful, Balanced, or Aggressive)
-3. Set a scan limit (how many recent messages to scan)
-4. Review the results and see which messages would be labeled
+### Setup Wizard (first run only)
 
-After you start a scan, the app:
+See "Setup Wizard" above for the 6-step process that configures your Jev key, Google Cloud project, and Gmail OAuth access.
 
-- Searches Gmail for old messages (older than your configured age, excluding attachments and starred messages)
-- Sends each message to the Jev AI model to judge its importance
-- Applies the `purge` label to messages it thinks are safe to delete
-- Shows you a summary so you can review before anything is moved to Trash
+### Rules
 
-You can then go to Gmail, search for `label:purge`, review the labeled messages, and star or remove the label from anything you want to keep. When you're ready, use the CLI (`npm run apply --yes`) to move them to Trash.
+Configure which kinds of messages Jev should consider for deletion (newsletters, promotions, social media, etc.) and which kinds to always keep (personal correspondence, receipts, account records, etc.). Choose a strictness level (Careful, Balanced, or Aggressive) and set the age threshold (default: 10 years, meaning older emails are candidates for deletion). You can optionally set a scan limit to test with fewer emails.
+
+### Scan
+
+The app searches Gmail for emails older than your configured age (excluding attachments and starred messages). For each email, it sends the subject and snippet to the Jev AI model to judge whether it's worth keeping. The scan runs in the background and can be paused or resumed.
+
+### Review
+
+After a scan completes, you'll see a summary of emails Jev labeled for purging, plus how many it marked to keep and how many it wasn't sure about.
+
+You have two options to complete the deletion:
+
+**Option 1: Use the in-app "Move to Trash" button**
+This moves each labeled email on its own, so replies in the same conversation thread stay intact. Trash empties itself after 30 days.
+
+**Option 2: Delete in Gmail directly**
+Click "Open in Gmail" to see the labeled emails in Gmail. You can star or remove the label from any you want to keep. To delete the rest, go to Gmail Settings (gear) → See all settings → General tab, turn off Conversation view, then search for `label:purge`, select all, and delete. (Turning off Conversation view prevents deleting newer replies in the same thread.)
 
 ## Architecture
 
 - **Frontend:** React + TypeScript, with CSS modules for styling
-- **Backend:** Rust (via Tauri), handles Gmail API requests and Jev model calls
-- **Data Storage:** macOS Keychain for credentials, local SQLite for scan results
+- **Backend:** Rust (via Tauri), routes API requests through a proxy that adds authentication keys
+- **Data Storage:** macOS Keychain for credentials, IndexedDB for scan results and settings
 
-All API calls to Gmail and Jev are made from the Rust backend, so your credentials and API keys never touch the web view.
+API requests to Gmail and Jev are built by the frontend but routed through a Rust proxy (`app/src-tauri/src/proxy.rs`) that adds the authentication keys. This ensures your credentials and API keys never reach the web view.
