@@ -100,7 +100,13 @@ function Shell({ services }: { services: Services }) {
 
   return (
     <div className={styles.app}>
-      <Header progress={progress} email={status.gmailEmail} onSettings={() => go("settings")} />
+      <Header
+        progress={progress}
+        email={status.gmailEmail}
+        screen={screen}
+        onNavigate={hasCredentials(status) ? (target) => go(target) : null}
+        onSettings={() => go("settings")}
+      />
       <main className={styles.main}>
         {screen === "welcome" && <Welcome onStart={() => go("wizard")} />}
         {screen === "settings" && <Settings services={services} email={status.gmailEmail} onChanged={refresh} onBack={back} />}

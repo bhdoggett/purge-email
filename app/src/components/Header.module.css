@@ -7,8 +7,37 @@
   background: var(--color-surface);
 }
 .title {
+  font: inherit;
   font-family: var(--font-display);
   font-weight: 700;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.nav {
+  display: flex;
+  gap: var(--space-1);
+}
+.tab {
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--color-muted);
+  cursor: pointer;
+}
+.tab:hover {
+  color: var(--color-text);
+}
+.current {
+  color: var(--color-text);
+  border-color: var(--color-border);
+  background: var(--color-bg);
 }
 .status {
   font-size: var(--text-sm);
