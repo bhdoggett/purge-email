@@ -6,7 +6,7 @@ import { type LabelRecord, openStore } from "../storage/db.ts";
 import { createFakeGmail, fakeAnswers, idsWithLabel, makeSummary } from "./fakes.ts";
 import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
-import { countByLabel, planReconcile, type ReconcileInput, reconcile, settingsEqual, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
+import { countByLabel, planReconcile, prefixInUseByUser, type ReconcileInput, reconcile, settingsEqual, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
 
 const NOW = 10_000_000;
 const OLD = NOW - USER_CHANGE_GRACE_MS;
@@ -399,6 +399,27 @@ describe("countByLabel", () => {
     // A label holding only starred mail is left out when starred mail is protected.
     gmail.labelsOf.set("a", new Set());
     expect(await countByLabel(gmail, DEFAULT_SETTINGS)).toEqual(new Map([["purge/scam", 1]]));
+  });
+});
+
+describe("prefixInUseByUser", () => {
+  it("is true when labels under the prefix hold mail and the app has no records under it", async () => {
+    const gmail = createFakeGmail([makeSummary("a"), makeSummary("b")]);
+    gmail.labelsOf.set("a", new Set(["mine/work"]));
+    expect(await prefixInUseByUser(gmail, new Map(), "mine")).toBe(true);
+    expect(await prefixInUseByUser(gmail, new Map(), "other")).toBe(false);
+    // The parent label alone counts too.
+    gmail.labelsOf.set("b", new Set(["box"]));
+    expect(await prefixInUseByUser(gmail, new Map(), "box")).toBe(true);
+    // A record reconcile wrote for a label it found there (user-chosen) doesn't make it the app's.
+    expect(await prefixInUseByUser(gmail, new Map([["a", rec("a", "mine/work", { userChosen: true })]]), "mine")).toBe(true);
+  });
+
+  it("is false when the app has its own records under the prefix, in any case", async () => {
+    const gmail = createFakeGmail([makeSummary("a")]);
+    gmail.labelsOf.set("a", new Set(["purge/promotion"]));
+    expect(await prefixInUseByUser(gmail, new Map([["a", rec("a", "Purge/promotion")]]), "purge")).toBe(false);
+    expect(await prefixInUseByUser(gmail, new Map([["x", rec("x", "purge/maybe", { userRemoved: true })]]), "purge")).toBe(false);
   });
 });
 

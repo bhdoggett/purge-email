@@ -26,21 +26,51 @@ export function buildRows(counts: Map<string, number>, prefix: string): ReviewRo
 
 export const totalOf = (rows: ReviewRow[]): number => rows.reduce((n, r) => n + r.count, 0);
 
+/**
+ * What the user must do before Gmail's labels can be trusted for deleting:
+ * - `ok`: labels match the current rules.
+ * - `update`: rules changed in a way Update labels can apply, or the last update left changes waiting on Gmail.
+ * - `rescan`: the age or a protection checkbox changed; only a new scan finds the right emails.
+ * - `scan`: the app doesn't know which rules made the labels (no finished scan, e.g. after Clear scan data).
+ *   Update labels must not be offered here: with no candidates it would strip every label.
+ */
+export type LabelsAction = "ok" | "update" | "rescan" | "scan";
+
 export interface ScanState {
-  rescan: boolean;
-  changed: boolean;
+  action: LabelsAction;
   prefixChanged: boolean;
+  /** The last reconcile deferred changes because Gmail's lists hadn't caught up. */
+  settling: boolean;
 }
 
-export function scanState(scan: Pick<ScanRecord, "settingsAtScan"> | null, settings: Settings): ScanState {
+export function scanState(scan: Pick<ScanRecord, "settingsAtScan" | "deferred"> | null, settings: Settings): ScanState {
   const at = scan?.settingsAtScan;
-  if (!at) return { rescan: false, changed: false, prefixChanged: false };
-  const rescan = needsRescan(at, settings);
-  return { rescan, changed: !rescan && !settingsEqual(at, settings), prefixChanged: at.labelPrefix !== settings.labelPrefix };
+  if (!at) return { action: "scan", prefixChanged: false, settling: false };
+  const prefixChanged = at.labelPrefix !== settings.labelPrefix;
+  const settling = (scan?.deferred ?? 0) > 0;
+  if (needsRescan(at, settings)) return { action: "rescan", prefixChanged, settling };
+  return { action: settling || !settingsEqual(at, settings) ? "update" : "ok", prefixChanged, settling };
 }
 
+/** The note shown above the rows when the labels can't be trusted yet, or null when they can. */
+export function labelsWarning(state: ScanState): string | null {
+  switch (state.action) {
+    case "ok":
+      return null;
+    case "update":
+      return "Your labels don't match your current rules yet. Click Update labels before deleting anything in Gmail.";
+    case "rescan":
+      return "Your labels don't match your current rules yet. Click Rescan before deleting anything in Gmail.";
+    case "scan":
+      return "The app doesn't know which rules made these labels, so they may not match your current rules. Scan first before deleting anything in Gmail.";
+  }
+}
+
+export const SETTLING_NOTE = "Some labels are still settling in Gmail. Try Update labels again in a few minutes.";
+
+/** Gmail's #label links use `+` for spaces and `%2F` for the nesting `/`. */
 export function gmailLabelUrl(name: string): string {
-  return `https://mail.google.com/mail/u/0/#label/${encodeURIComponent(name)}`;
+  return `https://mail.google.com/mail/u/0/#label/${encodeURIComponent(name).replace(/%20/g, "+")}`;
 }
 
 export function updateMessage(r: { moved: number; added: number; removed: number }, oldPrefix: string | null): string {

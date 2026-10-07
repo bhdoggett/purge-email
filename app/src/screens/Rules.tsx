@@ -6,6 +6,8 @@ import { Button } from "../components/Button.tsx";
 import { Checkbox } from "../components/Checkbox.tsx";
 import { formatDuration, formatUsd, labelPreview } from "../format.ts";
 import { estimate } from "../scan/estimate.ts";
+import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
+import { prefixInUseByUser } from "../scan/reconcile.ts";
 import type { ScanRecord } from "../storage/db.ts";
 import type { Services } from "../services.ts";
 import { useProgress } from "../useProgress.ts";
@@ -26,7 +28,8 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
   const [est, setEst] = useState<Awaited<ReturnType<typeof estimate>> | null>(null);
   const [estError, setEstError] = useState<string | null>(null);
   const [prefixDraft, setPrefixDraft] = useState<string | null>(null);
-  const [limit, setLimit] = useState<number | undefined>(import.meta.env.DEV ? 20 : undefined);
+  const [limit, setLimit] = useState<number | undefined>(DEV_SCAN_LIMIT);
+  const [foreignPrefix, setForeignPrefix] = useState(false);
 
   useEffect(() => {
     void services.store.getSettings().then(setSettings);
@@ -40,6 +43,26 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
     estimate(services, settings, limit).then(setEst, (e) => setEstError(e instanceof Error ? e.message : String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [services, settings?.years, settings?.keepAttachments, settings?.keepStarred, limit]);
+
+  // Warn when the chosen name's labels already hold mail the app didn't label. Waits for typing to pause.
+  useEffect(() => {
+    if (!settings) return;
+    const prefix = settings.labelPrefix;
+    let current = true;
+    setForeignPrefix(false);
+    const timer = setTimeout(() => {
+      services.store
+        .allLabels()
+        .then((records) => prefixInUseByUser(services.gmail, records, prefix))
+        .then((inUse) => current && setForeignPrefix(inUse))
+        .catch(() => {});
+    }, 400);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [services, settings?.labelPrefix]);
 
   if (!settings) return null;
 
@@ -121,6 +144,11 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
         <div id="label-name-help">
           {prefixError && <p className={styles.fieldError} role="alert">{prefixError}</p>}
           {!prefixError && <p className={styles.preview}>{labelPreview(prefixText)}</p>}
+          {!prefixError && foreignPrefix && (
+            <p className={styles.fieldError} role="alert">
+              Labels under '{settings.labelPrefix}' already exist in your Gmail. Pick a different name so the app doesn't mix with your own labels.
+            </p>
+          )}
         </div>
       </div>
 

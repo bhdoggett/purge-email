@@ -11,7 +11,7 @@ export function Welcome({ onStart }: { onStart: () => void }) {
         anything goes.
       </p>
       <ul className={styles.promises}>
-        <li>It only adds a label. Nothing is deleted unless you choose to.</li>
+        <li>It only adds labels and never deletes anything. Any deleting is up to you, in Gmail.</li>
         <li>Your keys stay in your Mac's Keychain, never in a file.</li>
         <li>A typical mailbox costs about $2 in Jev usage.</li>
       </ul>

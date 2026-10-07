@@ -3,17 +3,10 @@ import { useEffect, useState } from "react";
 import type { Settings } from "@core/decide.ts";
 import type { Screen } from "../App.tsx";
 import { Button } from "../components/Button.tsx";
+import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
 import { countByLabel, reconcile, summarize } from "../scan/reconcile.ts";
 import type { Services } from "../services.ts";
-import {
-  buildRows,
-  gmailLabelUrl,
-  type ReviewRow,
-  scanState,
-  type ScanState,
-  totalOf,
-  updateMessage,
-} from "./reviewModel.ts";
+import { buildRows, gmailLabelUrl, labelsWarning, type ReviewRow, scanState, type ScanState, SETTLING_NOTE, totalOf, updateMessage } from "./reviewModel.ts";
 import styles from "./Review.module.css";
 
 interface Loaded {
@@ -60,7 +53,8 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
   }, []);
 
   async function updateLabels() {
-    if (!data || updating) return;
+    // Never reconcile without a finished scan: with no candidates it would strip every label.
+    if (!data || updating || data.state.action !== "update") return;
     setUpdating(true);
     setMessage(null);
     try {
@@ -74,16 +68,14 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
     }
   }
 
-  function busyBlocked(): boolean {
-    if (!engine.isBusy()) return false;
-    setMessage(null);
-    setError("Another job is running. Wait for it to finish.");
-    return true;
-  }
-
-  function rescan() {
-    if (!data || busyBlocked()) return;
-    void engine.start(data.settings);
+  function scan() {
+    if (!data) return;
+    if (engine.isBusy()) {
+      setMessage(null);
+      setError("Another job is running. Wait for it to finish.");
+      return;
+    }
+    void engine.start(data.settings, { limit: DEV_SCAN_LIMIT });
     go("scan");
   }
 
@@ -109,28 +101,32 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
   }
 
   const { settings, rows, state } = data;
+  const warning = labelsWarning(state);
 
   return (
     <section className={styles.review}>
       <h1 className={styles.heading}>{totalOf(rows).toLocaleString()} emails labeled under "{settings.labelPrefix}"</h1>
       <p className={styles.lede}>
-        Look through them in Gmail. Remove the label (or star the email) to keep anything. Jev left the rest unlabeled.
+        This app only adds labels. It never deletes anything. Look through each label in Gmail. To keep an email, remove its label. Starring it isn't
+        enough: selecting all and deleting in Gmail deletes everything under the label, starred mail included. Jev left the rest unlabeled.
       </p>
 
-      {state.rescan && (
-        <div className={styles.notice}>
-          <p>You changed the age or what's always kept. Rescan to apply it.</p>
-          <Button onClick={rescan}>Rescan</Button>
+      {warning && (
+        <div className={styles.warning} role="alert">
+          <p className={styles.warningText}>{warning}</p>
+          {state.action === "update" && state.settling && <p>{SETTLING_NOTE}</p>}
+          {state.action === "update" && (
+            <Button disabled={updating} onClick={() => void updateLabels()}>
+              {updating ? "Updating labels…" : "Update labels"}
+            </Button>
+          )}
+          {state.action === "rescan" && <Button onClick={scan}>Rescan</Button>}
+          {state.action === "scan" && <Button onClick={scan}>Scan now</Button>}
         </div>
       )}
 
       <div className={styles.actions}>
         <Button variant="secondary" onClick={() => go("rules")}>Change rules</Button>
-        {state.changed && (
-          <Button variant="secondary" disabled={updating} onClick={() => void updateLabels()}>
-            {updating ? "Updating labels…" : "Update labels to match new rules"}
-          </Button>
-        )}
       </div>
       {message && <p role="status">{message}</p>}
       {error && <p className={styles.error} role="alert">{error}</p>}
@@ -149,15 +145,16 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
           </li>
         ))}
       </ul>
+      {settings.keepStarred && <p className={styles.muted}>Counts leave out starred emails, but Gmail's select-all still deletes them.</p>}
 
-      <h2 className={styles.subheading}>Or delete them in Gmail yourself</h2>
+      <h2 className={styles.subheading}>Delete them in Gmail yourself</h2>
       <p className={styles.muted}>Turn off conversation view first, or deleting a thread also deletes newer replies in it.</p>
       <ol className={styles.steps}>
         <li>In Gmail, open Settings (gear) → See all settings.</li>
         <li>On the General tab, set Conversation view to off and save.</li>
-        <li>Open a label above, select all, and delete.</li>
+        <li>Open a label above. To keep an email, remove the label from it. Starring it isn't enough.</li>
+        <li>Select all and delete. This deletes everything still under the label, including starred mail. Gmail keeps deleted mail in Trash for 30 days.</li>
       </ol>
-
     </section>
   );
 }

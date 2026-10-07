@@ -41,6 +41,9 @@ export const INITIAL_PROGRESS: Progress = {
   error: null,
 };
 
+/** Development builds scan only this many emails unless the Rules screen's dev field changes it. */
+export const DEV_SCAN_LIMIT: number | undefined = import.meta.env.DEV ? 20 : undefined;
+
 export const JEV_USD_PER_TOKEN = 0.042 / 1_000_000;
 export const FEED_SIZE = 8;
 

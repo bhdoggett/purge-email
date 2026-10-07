@@ -219,6 +219,21 @@ export async function reconcile(
 }
 
 /**
+ * True when labels under `prefix` already hold mail in Gmail but the app has never labeled anything
+ * under that prefix: they are probably the user's own labels, and the app would mix with them.
+ */
+export async function prefixInUseByUser(gmail: Gmail, records: Map<string, LabelRecord>, prefix: string): Promise<boolean> {
+  const under = `${prefix.toLowerCase()}/`;
+  if ([...records.values()].some((r) => !r.userChosen && r.label.toLowerCase().startsWith(under))) return false;
+  for (const name of [prefix, ...appLabelNames(prefix)]) {
+    const labelId = await gmail.findLabelId(name);
+    if (labelId === null) continue;
+    if ((await gmail.listIds("", 1, { labelIds: [labelId], includeSpamTrash: true })).length > 0) return true;
+  }
+  return false;
+}
+
+/**
  * Message count per app label under the current prefix, skipping starred mail when it is protected.
  * Read by label id only (no search text): starred mail is subtracted using the STARRED label id.
  * Labels with none are left out.

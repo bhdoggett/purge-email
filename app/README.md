@@ -2,7 +2,7 @@
 
 A desktop app (built with Tauri 2 and React) that helps you clean out old Gmail messages. The app uses Google's OAuth to access your Gmail account and the Jev AI model to judge whether messages are worth keeping.
 
-Like the CLI, the app doesn't delete anything at first. Instead, it adds Gmail labels to messages it thinks should go, one sub-label per kind of mail (for example `purge/newsletter` and `purge/promotion`), plus `purge/maybe` for mail Jev wasn't sure about. You can review them in Gmail before applying the delete.
+The app never deletes, trashes or moves email. It only adds Gmail labels to messages it thinks should go, one sub-label per kind of mail (for example `purge/newsletter` and `purge/promotion`), plus `purge/maybe` for mail Jev wasn't sure about. You review each label in Gmail and do any deleting there yourself. As a backstop, the app's Rust proxy refuses any Gmail request that would trash, spam or delete mail.
 
 ## Setup and Development
 
@@ -88,7 +88,7 @@ See "Setup Wizard" above for the 6-step process that configures your Jev key, Go
 
 ### Rules
 
-Choose which kinds of messages Jev should label for purging (newsletters, promotions, social, security alerts, shipping, scams, work, automated) and which to always keep (personal correspondence, receipts, account records, etc.). Two more checkboxes under "Always keep" protect emails with attachments and starred emails; both are on by default. Choose a strictness level (Careful, Balanced, or Aggressive), set the age threshold (default: 10 years), and pick the label name. Labels look like `purge/newsletter`, with `purge/maybe` for mail Jev wasn't sure about. In development builds only, you can set a scan limit (the "Limit (dev)" field).
+Choose which kinds of messages Jev should label for purging (newsletters, promotions, social, security alerts, shipping, scams, work, automated) and which to always keep (personal correspondence, receipts, account records, etc.). Two more checkboxes under "Always keep" protect emails with attachments and starred emails; both are on by default. Choose a strictness level (Careful, Balanced, or Aggressive), set the age threshold (default: 10 years), and pick the label name. Labels look like `purge/newsletter`, with `purge/maybe` for mail Jev wasn't sure about. If labels under the chosen name already hold mail the app didn't label (probably your own labels), Rules warns: "Labels under '<name>' already exist in your Gmail. Pick a different name so the app doesn't mix with your own labels." The app never removes or moves a label it has no record of adding. In development builds only, you can set a scan limit (the "Limit (dev)" field).
 
 ### Scan
 
@@ -103,17 +103,25 @@ Email bodies and attachments are never sent to Jev. The scan runs in the backgro
 
 ### Review
 
-After a scan, Review shows one row per label that has email in it, with the count. Each row has **Open in Gmail** and **Move N to Trash**. The `maybe` row carries a note to look through it before deleting. **Move all to Trash** covers every kind label but never `maybe`. Confirmation says whether starred emails are skipped (when they're protected) or included. Each email moves on its own, so replies in the same conversation thread stay intact, and Trash empties itself after 30 days.
+After a scan, Review shows one row per label that has email in it, with the count (starred emails are left out of the count when they're protected) and an **Open in Gmail** button. The `maybe` row carries a note to look through it before deleting. Review has no delete or trash buttons: the app only labels.
 
-If you change the age, the attachment checkbox, or the starred checkbox after a scan, the labels may include mail that is now protected. Review then shows **Rescan needed** and disables every Move to Trash button until you rescan. Other changes (kinds, protections, strictness, label name) show **Update labels to match new rules**, which moves, adds and removes labels without a rescan. After a label-name change, the old labels are left empty and you can delete them in Gmail.
+**Before deleting anything in Gmail, make sure Review shows no warning.** Review shows a prominent note above the rows whenever the labels in Gmail may not match your current rules:
 
-To delete in Gmail yourself, click "Open in Gmail" on a row, star or unlabel anything you want to keep, then turn off Conversation view (Settings, gear, See all settings, General tab) so deleting a thread doesn't take newer replies with it. Then select all and delete.
+- **"Your labels don't match your current rules yet. Click Update labels before deleting anything in Gmail."** You changed the kinds, protections, strictness or label name since the labels were made. **Update labels** moves, adds and removes labels without a rescan. After a label-name change, the old labels are left empty and you can delete them in Gmail.
+- **"…Click Rescan before deleting anything in Gmail."** You changed the age, the attachment checkbox or the starred checkbox. Only a new scan finds the right emails.
+- **"…Scan first before deleting anything in Gmail."** The app doesn't know which rules made the labels, for example after Settings → Clear scan data or before a scan has finished. Update labels isn't offered here, because without a scan it would remove every label.
+- **"Some labels are still settling in Gmail. Try Update labels again in a few minutes."** Gmail's label lists can lag for a few minutes after the app changes a label. For mail labeled in the last 10 minutes, the app changes nothing unless Gmail confirms the label it recorded, so it never undoes a change you just made. Click Update labels again once the lists catch up.
 
-**Empty spam folder** moves everything in spam to Trash, one email at a time.
+#### Deleting in Gmail safely
+
+1. In Gmail, open Settings (gear) → See all settings. On the General tab, set Conversation view to off and save. Otherwise deleting a thread also deletes newer replies in it.
+2. Click **Open in Gmail** on a row in Review.
+3. To keep an email, **remove the label from it**. Starring is not enough: Gmail's select-all deletes everything under the label, starred mail included.
+4. Select all and delete. Gmail keeps deleted mail in Trash for 30 days.
 
 ### Settings
 
-Access settings from a button in the header. Here you can remove your saved Jev key, Google credentials, and scan data to start fresh or switch accounts.
+Access settings from a button in the header. Here you can remove your saved Jev key, Google credentials, and scan data to start fresh or switch accounts. After clearing scan data, Review asks you to scan again before deleting anything in Gmail.
 
 ## Architecture
 

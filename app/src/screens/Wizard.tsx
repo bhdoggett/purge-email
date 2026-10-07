@@ -186,7 +186,7 @@ export function Wizard({ services, onDone, startAt, message }: WizardProps) {
             <ol className={styles.instructions}>
               <li>Click Sign in. Your browser opens Google's sign-in page.</li>
               <li>Google warns that it hasn't verified the app. That's expected for your own project: click Continue.</li>
-              <li>Allow access to read, label, and delete email, then come back here.</li>
+              <li>Allow the access Google asks for, then come back here. The app only uses it to read and label email. It never deletes anything.</li>
             </ol>
             <Button disabled={working} onClick={() => attempt(6, async () => { await googleSignIn(); })}>
               {working ? "Waiting for Google…" : "Sign in with Google"}
