@@ -80,6 +80,25 @@ export async function connect(): Promise<Gmail> {
   return google.gmail({ version: "v1", auth });
 }
 
+function isRateLimit(err: unknown): boolean {
+  const e = err as { status?: number; message?: string };
+  return e.status === 429 || (e.status === 403 && /quota|rate limit/i.test(e.message ?? ""));
+}
+
+/** Retries Gmail calls that hit per-minute quota, backing off up to about a minute. */
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!isRateLimit(err) || attempt >= 6) throw err;
+      const delay = Math.min(2 ** attempt * 2000, 60_000) * (0.75 + Math.random() * 0.5);
+      console.warn(`Gmail rate limit hit; retrying in ${Math.round(delay / 1000)}s`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+}
+
 /** Lists message IDs (and their thread IDs) matching a Gmail search query. */
 export async function listIds(
   gmail: Gmail,
@@ -89,12 +108,12 @@ export async function listIds(
   const out: { id: string; threadId: string }[] = [];
   let pageToken: string | undefined;
   do {
-    const res = await gmail.users.messages.list({
+    const res = await withRetry(() => gmail.users.messages.list({
       userId: "me",
       q,
       maxResults: 500,
       pageToken,
-    });
+    }));
     for (const m of res.data.messages ?? []) {
       if (m.id && m.threadId) out.push({ id: m.id, threadId: m.threadId });
       if (out.length >= limit) return out;
@@ -111,14 +130,14 @@ function collectAttachmentNames(part: gmail_v1.Schema$MessagePart | undefined, o
 }
 
 export async function getSummary(gmail: Gmail, id: string): Promise<MessageSummary> {
-  const res = await gmail.users.messages.get({
+  const res = await withRetry(() => gmail.users.messages.get({
     userId: "me",
     id,
     format: "full",
     // Skip body data; we only need headers, snippet, and part filenames.
     fields:
       "id,threadId,labelIds,snippet,payload(headers,filename,parts(filename,parts(filename,parts(filename))))",
-  });
+  }));
   const m = res.data;
   const headers = new Map(
     (m.payload?.headers ?? []).map((h) => [h.name?.toLowerCase() ?? "", h.value ?? ""]),
@@ -155,13 +174,15 @@ export async function ensureLabel(gmail: Gmail, name: string): Promise<string> {
 export async function addLabel(gmail: Gmail, labelId: string, ids: string[]): Promise<void> {
   // batchModify accepts up to 1000 IDs per call.
   for (let i = 0; i < ids.length; i += 1000) {
-    await gmail.users.messages.batchModify({
-      userId: "me",
-      requestBody: { ids: ids.slice(i, i + 1000), addLabelIds: [labelId] },
-    });
+    await withRetry(() =>
+      gmail.users.messages.batchModify({
+        userId: "me",
+        requestBody: { ids: ids.slice(i, i + 1000), addLabelIds: [labelId] },
+      }),
+    );
   }
 }
 
 export async function trash(gmail: Gmail, id: string): Promise<void> {
-  await gmail.users.messages.trash({ userId: "me", id });
+  await withRetry(() => gmail.users.messages.trash({ userId: "me", id }));
 }

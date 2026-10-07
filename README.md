@@ -50,6 +50,6 @@ npm run spam            # shows count only
 npm run spam -- --yes   # moves to Trash
 ```
 
-Options for `plan`: `--keep-at 0.5`, `--trash-below 0.1`, `--concurrency 8`.
+Options for `plan`: `--keep-at 0.5`, `--trash-below 0.1`, `--concurrency 4`.
 
 Jev judgments are cached in `reports/judgments.jsonl`, so re-running `plan` with different thresholds doesn't re-bill already-judged messages.

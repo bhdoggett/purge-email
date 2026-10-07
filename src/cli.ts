@@ -34,7 +34,7 @@ const { positionals, values } = parseArgs({
 	options: {
 		years: { type: "string", default: "10" },
 		limit: { type: "string" },
-		concurrency: { type: "string", default: "8" },
+		concurrency: { type: "string", default: "4" },
 		"keep-at": { type: "string", default: "0.5" },
 		"trash-below": { type: "string", default: "0.1" },
 		yes: { type: "boolean", default: false },
