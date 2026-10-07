@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "@core/decide.ts";
 import { QUESTIONS_VERSION } from "@core/questions.ts";
 import { openDB } from "idb";
@@ -177,8 +177,8 @@ async function makeV3(name: string, ids: string[], seal?: { key: CryptoKey; ids:
     const a = { ...answers, inputTokens: ids.indexOf(id) };
     if (seal?.ids.has(id)) {
       const { id: _, ...rest } = s;
-      await v3.put("summaries", { id, ...(await encryptJson(seal.key, rest)) });
-      await v3.put("answers", await encryptJson(seal.key, a), id);
+      await v3.put("summaries", { id, ...(await encryptJson(seal.key, rest, id)) });
+      await v3.put("answers", await encryptJson(seal.key, a, id), id);
     } else {
       await v3.put("summaries", s);
       await v3.put("answers", a, id);
@@ -268,33 +268,159 @@ describe("encryption at rest", () => {
 
   it("treats records it cannot decrypt as missing, without throwing", async () => {
     const name = `t-${crypto.randomUUID()}`;
-    const lost = await openStore(await importDataKey(randomKeyBase64()), name);
-    await lost.putSummary(secretSummary);
-    await lost.putAnswers("m9", answers);
-
-    const store = await openStore(await importDataKey(randomKeyBase64()), name);
-    expect(await store.getSummary("m9")).toBeUndefined();
-    expect(await store.getAnswers("m9")).toBeUndefined();
-    expect((await store.allSummaries()).size).toBe(0);
-    expect((await store.allAnswers()).size).toBe(0);
-
+    const store = await openStore(testKey, name);
     await store.putSummary(summary);
     await store.putAnswers("m1", answers);
-    expect([...(await store.allSummaries()).keys()]).toEqual(["m1"]);
-    expect([...(await store.allAnswers()).keys()]).toEqual(["m1"]);
+    // A record sealed with some other key, as after a partial restore.
+    const other = await importDataKey(randomKeyBase64());
+    const { id: _, ...rest } = secretSummary;
+    const db = await openDB(name);
+    await db.put("summaries", { id: "m9", ...(await encryptJson(other, rest, "m9")) });
+    await db.put("answers", await encryptJson(other, answers, "m9"), "m9");
+    db.close();
+
+    const fresh = await openStore(testKey, name);
+    expect(await fresh.getSummary("m9")).toBeUndefined();
+    expect(await fresh.getAnswers("m9")).toBeUndefined();
+    expect([...(await fresh.allSummaries()).keys()]).toEqual(["m1"]);
+    expect([...(await fresh.allAnswers()).keys()]).toEqual(["m1"]);
     // Re-saving a lost record replaces it with one the current key can read.
-    await store.putSummary(secretSummary);
-    expect(await store.getSummary("m9")).toEqual(secretSummary);
+    await fresh.putSummary(secretSummary);
+    expect(await fresh.getSummary("m9")).toEqual(secretSummary);
   });
 
-  it("asks the key provider again after the key is replaced", async () => {
+  it("binds each record to its id, so swapped ciphertexts read as missing", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const store = await openStore(testKey, name);
+    await store.putSummary(summary);
+    await store.putSummary(secretSummary);
+    await store.putAnswers("m1", answers);
+    await store.putAnswers("m9", { ...answers, inputTokens: 9 });
+    const db = await openDB(name);
+    const [s1, s9] = [await db.get("summaries", "m1"), await db.get("summaries", "m9")];
+    const [a1, a9] = [await db.get("answers", "m1"), await db.get("answers", "m9")];
+    await db.put("summaries", { ...s9, id: "m1" });
+    await db.put("summaries", { ...s1, id: "m9" });
+    await db.put("answers", a9, "m1");
+    await db.put("answers", a1, "m9");
+    db.close();
+
+    const fresh = await openStore(testKey, name);
+    expect(await fresh.getSummary("m1")).toBeUndefined();
+    expect(await fresh.getSummary("m9")).toBeUndefined();
+    expect(await fresh.getAnswers("m1")).toBeUndefined();
+    expect((await fresh.allSummaries()).size).toBe(0);
+    expect((await fresh.allAnswers()).size).toBe(0);
+  });
+
+  it("binds migrated records to their ids too", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    await makeV3(name, ["a", "b"]);
+    await openStore(testKey, name);
+    const db = await openDB(name);
+    const [sa, sb] = [await db.get("summaries", "a"), await db.get("summaries", "b")];
+    await db.put("summaries", { ...sb, id: "a" });
+    await db.put("summaries", { ...sa, id: "b" });
+    db.close();
+    const fresh = await openStore(testKey, name);
+    expect(await fresh.getSummary("a")).toBeUndefined();
+    expect((await fresh.allSummaries()).size).toBe(0);
+  });
+
+  it("clears scan data saved under a different key instead of leaving a finished scan with nothing readable", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const a = await openStore(await importDataKey(randomKeyBase64()), name);
+    await a.putSummary(secretSummary);
+    await a.putAnswers("m9", answers);
+    await a.putScan({ ageMonths: 8, candidateIds: ["m9"], repliedThreadIds: [], finished: true, startedAt: 1, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: null });
+    await a.putOverrides(["m9"], "promotion", 1);
+    await a.putLabels([{ id: "m9", label: "purge/promotion", labeledAt: 1, userRemoved: false, userChosen: false }]);
+    await a.putWizard([1]);
+
+    const b = await openStore(await importDataKey(randomKeyBase64()), name);
+    expect(await b.getScan()).toBeNull();
+    expect(await rawRecord(name, "summaries", "m9")).toBeUndefined();
+    expect(await rawRecord(name, "answers", "m9")).toBeUndefined();
+    // The user's choices and settings are not encrypted and stay.
+    expect((await b.allOverrides()).get("m9")?.slug).toBe("promotion");
+    expect((await b.allLabels()).get("m9")?.label).toBe("purge/promotion");
+    expect(await b.getWizard()).toEqual([1]);
+
+    // The new key is recorded: data saved now survives the next open with it.
+    await b.putSummary(summary);
+    await b.putScan({ ageMonths: 8, candidateIds: ["m1"], repliedThreadIds: [], finished: true, startedAt: 2, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: null });
+  });
+
+  it("keeps scan data when reopened with the same key", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const a = await openStore(testKey, name);
+    await a.putSummary(summary);
+    await a.putScan({ ageMonths: 8, candidateIds: ["m1"], repliedThreadIds: [], finished: true, startedAt: 1, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: null });
+    const b = await openStore(testKey, name);
+    expect((await b.getScan())?.candidateIds).toEqual(["m1"]);
+    expect(await b.getSummary("m1")).toEqual(summary);
+  });
+
+  it("checks a key the provider swaps in later and clears data the new key can't read", async () => {
     let key = importDataKey(randomKeyBase64());
     const store = await openStore(() => key, `t-${crypto.randomUUID()}`);
     await store.putSummary(summary);
+    await store.putScan({ ageMonths: 8, candidateIds: ["m1"], repliedThreadIds: [], finished: true, startedAt: 1, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: null });
+    expect((await store.allSummaries()).size).toBe(1);
     key = importDataKey(randomKeyBase64());
     expect(await store.getSummary("m1")).toBeUndefined();
+    expect(await store.getScan()).toBeNull();
+    expect((await store.allSummaries()).size).toBe(0);
     await store.putSummary(summary);
     expect(await store.getSummary("m1")).toEqual(summary);
+  });
+
+  it("decrypts everything once, then serves allSummaries and allAnswers from memory", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const store = await openStore(testKey, name);
+    await store.putSummary(summary);
+    await store.putSummary(secretSummary);
+    await store.putAnswers("m1", answers);
+    const decrypt = vi.spyOn(crypto.subtle, "decrypt");
+    try {
+      expect((await store.allSummaries()).size).toBe(2);
+      expect((await store.allAnswers()).size).toBe(1);
+      const first = decrypt.mock.calls.length;
+      expect(first).toBe(3);
+      await store.allSummaries();
+      await store.allAnswers();
+      expect(decrypt.mock.calls.length).toBe(first);
+
+      // Puts keep the cache current without decrypting again.
+      const changed = { ...summary, subject: "changed" };
+      await store.putSummary(changed);
+      await store.putAnswers("m9", { ...answers, inputTokens: 9 });
+      expect((await store.allSummaries()).get("m1")).toEqual(changed);
+      expect((await store.allAnswers()).get("m9")?.inputTokens).toBe(9);
+      expect(decrypt.mock.calls.length).toBe(first);
+
+      // Callers can't change the cache.
+      const map = await store.allSummaries();
+      map.delete("m1");
+      expect(() => {
+        map.get("m9")!.subject = "mutated";
+      }).toThrow(TypeError);
+      expect(() => (map.get("m9")!.labels as string[]).push("x")).toThrow(TypeError);
+      // Nor can a caller change a saved value afterwards through its own object.
+      const mine = { ...summary, id: "m5", labels: ["INBOX"] };
+      await store.putSummary(mine);
+      mine.labels.push("changed");
+      expect((await store.allSummaries()).get("m5")?.labels).toEqual(["INBOX"]);
+      expect((await store.allSummaries()).get("m1")).toEqual(changed);
+      expect((await store.allSummaries()).get("m9")).toEqual(secretSummary);
+      expect(decrypt.mock.calls.length).toBe(first);
+
+      await store.clearScanData();
+      expect((await store.allSummaries()).size).toBe(0);
+      expect((await store.allAnswers()).size).toBe(0);
+    } finally {
+      decrypt.mockRestore();
+    }
   });
 
   it("loads 30,000 encrypted summaries quickly", { timeout: 120_000 }, async () => {
@@ -305,7 +431,7 @@ describe("encryption at rest", () => {
     const records = await Promise.all(
       Array.from({ length: n }, async (_, i) => {
         const { id: _id, ...rest } = { ...secretSummary, subject: `A fairly typical marketing subject line number ${i}`, snippet: "x".repeat(200) };
-        return { id: `m${i}`, ...(await encryptJson(key, rest)) };
+        return { id: `m${i}`, ...(await encryptJson(key, rest, `m${i}`)) };
       }),
     );
     const db = await openDB(name);

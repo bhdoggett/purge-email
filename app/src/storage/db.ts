@@ -96,12 +96,17 @@ function normalizeScan(raw: StoredScan, defaults: Settings): ScanRecord {
 const MIGRATION_BATCH = 500;
 /** Records decrypted concurrently when loading everything. */
 const DECRYPT_CHUNK = 2000;
+/** kv entry holding "ok" sealed with the key the saved scan data was written with. */
+const KEY_CHECK = "keyCheck";
 
-/** Decrypts a stored record; a record the key can't open counts as missing. Plaintext is passed through. */
-async function unseal<T>(key: CryptoKey, stored: Sealed | T | undefined): Promise<T | undefined> {
+/**
+ * Decrypts a stored record bound to `id`; a record the key can't open (wrong key, or moved to
+ * another id) counts as missing. Plaintext from before encryption is passed through.
+ */
+async function unseal<T>(key: CryptoKey, id: string, stored: Sealed | T | undefined): Promise<T | undefined> {
   if (stored === undefined || !isSealed(stored)) return stored;
   try {
-    return await decryptJson<T>(key, stored);
+    return await decryptJson<T>(key, stored, id);
   } catch {
     return undefined;
   }
@@ -109,22 +114,31 @@ async function unseal<T>(key: CryptoKey, stored: Sealed | T | undefined): Promis
 
 async function unsealSummary(key: CryptoKey, stored: SealedSummary | Summary | undefined): Promise<Summary | undefined> {
   if (!isSealed(stored)) return stored;
-  const rest = await unseal<Omit<Summary, "id">>(key, stored);
+  const rest = await unseal<Omit<Summary, "id">>(key, stored.id, stored);
   return rest && ({ id: stored.id, ...rest } as Summary);
 }
 
 async function sealSummary(key: CryptoKey, s: Summary): Promise<SealedSummary> {
   const { id, ...rest } = s;
-  return { id, ...(await encryptJson(key, rest)) };
+  return { id, ...(await encryptJson(key, rest, id)) };
+}
+
+/** Freezes `value` and everything in it, so a cached value can't be changed by a caller. */
+function deepFreeze<T>(value: T): T {
+  if (typeof value === "object" && value !== null && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const v of Object.values(value)) deepFreeze(v);
+  }
+  return value;
 }
 
 /** Decrypts in chunks of concurrent WebCrypto calls, dropping records that can't be read. */
-async function unsealAll<S, T>(items: [string, S][], open: (s: S) => Promise<T | undefined>): Promise<Map<string, T>> {
+async function unsealAll<S, T>(items: [string, S][], open: (id: string, s: S) => Promise<T | undefined>): Promise<Map<string, T>> {
   const map = new Map<string, T>();
   for (let i = 0; i < items.length; i += DECRYPT_CHUNK) {
     const chunk = items.slice(i, i + DECRYPT_CHUNK);
-    const values = await Promise.all(chunk.map(([, s]) => open(s)));
-    values.forEach((v, j) => v !== undefined && map.set(chunk[j]![0], v));
+    const values = await Promise.all(chunk.map(([id, s]) => open(id, s)));
+    values.forEach((v, j) => v !== undefined && map.set(chunk[j]![0], deepFreeze(v)));
   }
   return map;
 }
@@ -154,7 +168,7 @@ async function encryptPlaintext(db: IDBPDatabase<PurgeDB>, key: CryptoKey) {
         const tx = db.transaction("summaries", "readwrite");
         await Promise.all([...sealed.map((r) => tx.store.put(r)), tx.done]);
       } else {
-        const sealed = await Promise.all(plain.map(([, v]) => encryptJson(key, v)));
+        const sealed = await Promise.all(plain.map(([id, v]) => encryptJson(key, v, id)));
         const tx = db.transaction("answers", "readwrite");
         await Promise.all([...sealed.map((r, i) => tx.store.put(r, plain[i]![0])), tx.done]);
       }
@@ -180,29 +194,122 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
       // Version 4 encrypts summaries and answers; encryptPlaintext does it once the database is open.
     },
   });
-  await encryptPlaintext(db, await getKey());
 
-  async function allAnswers() {
-    const tx = db.transaction("answers");
-    const items: [string, Sealed | Answers][] = [];
-    for (let cursor = await tx.store.openCursor(); cursor; cursor = await cursor.continue()) {
-      items.push([cursor.key, cursor.value]);
+  // Decrypted summaries and answers, loaded on first use and kept current by every write.
+  let summaryCache: Promise<Map<string, Summary>> | null = null;
+  let answerCache: Promise<Map<string, Answers>> | null = null;
+
+  async function cacheSet<T>(cache: Promise<Map<string, T>> | null, id: string, value: T) {
+    if (!cache) return;
+    try {
+      (await cache).set(id, value);
+    } catch {
+      // A failed load is dropped and retried by the next read.
     }
+  }
+
+  /**
+   * Removes summaries, answers and the scan in one transaction; with `check`, also records the key
+   * the data will be written with from now on.
+   */
+  async function clearScan(check?: Sealed) {
+    const tx = db.transaction(["summaries", "answers", "kv"], "readwrite");
+    await Promise.all([
+      tx.objectStore("summaries").clear(),
+      tx.objectStore("answers").clear(),
+      tx.objectStore("kv").delete("scan"),
+      ...(check ? [tx.objectStore("kv").put(check, KEY_CHECK)] : []),
+      tx.done,
+    ]);
+    summaryCache = null;
+    answerCache = null;
+  }
+
+  /**
+   * Makes sure saved scan data belongs to `k`. Data saved under another key (a Keychain reset, or a
+   * data folder restored without its key) can never be read again, and a finished scan that points
+   * at it would show an empty Review and plan to strip labels, so it is cleared and the scan redone.
+   * A database with no check yet (new, or from before encryption) keeps its data.
+   */
+  async function checkKey(k: CryptoKey) {
+    const stored = await db.get("kv", KEY_CHECK);
+    let ok = false;
+    if (isSealed(stored)) ok = (await unseal<string>(k, KEY_CHECK, stored)) === "ok";
+    if (!ok) {
+      const check = await encryptJson(k, "ok", KEY_CHECK);
+      if (stored === undefined) await db.put("kv", check, KEY_CHECK);
+      else await clearScan(check);
+    }
+    checked = k;
+  }
+
+  let checked: CryptoKey | null = null;
+  let checking: Promise<void> = Promise.resolve();
+  /** The current key, checked against the saved data whenever the provider returns a new one. */
+  async function ready(): Promise<CryptoKey> {
     const k = await getKey();
-    return unsealAll(items, (a) => unseal<Answers>(k, a));
+    if (k !== checked) {
+      checking = checking.catch(() => {}).then(() => (k === checked ? undefined : checkKey(k)));
+      await checking;
+    }
+    return k;
+  }
+
+  await encryptPlaintext(db, await ready());
+
+  function loadSummaries(): Promise<Map<string, Summary>> {
+    const load = (async () => {
+      const k = await ready();
+      const items = (await db.getAll("summaries")).map((s): [string, SealedSummary | Summary] => [s.id, s]);
+      return unsealAll(items, (_id, s) => unsealSummary(k, s));
+    })();
+    load.catch(() => {
+      if (summaryCache === load) summaryCache = null;
+    });
+    return load;
+  }
+
+  function loadAnswers(): Promise<Map<string, Answers>> {
+    const load = (async () => {
+      const k = await ready();
+      const tx = db.transaction("answers");
+      const items: [string, Sealed | Answers][] = [];
+      for (let cursor = await tx.store.openCursor(); cursor; cursor = await cursor.continue()) {
+        items.push([cursor.key, cursor.value]);
+      }
+      return unsealAll(items, (id, a) => unseal<Answers>(k, id, a));
+    })();
+    load.catch(() => {
+      if (answerCache === load) answerCache = null;
+    });
+    return load;
   }
 
   return {
-    getSummary: async (id) => unsealSummary(await getKey(), await db.get("summaries", id)),
-    putSummary: async (s) => void (await db.put("summaries", await sealSummary(await getKey(), s))),
-    getAnswers: async (id) => unseal<Answers>(await getKey(), await db.get("answers", id)),
-    putAnswers: async (id, a) => void (await db.put("answers", await encryptJson(await getKey(), a), id)),
-    async allSummaries() {
-      const items = (await db.getAll("summaries")).map((s): [string, SealedSummary | Summary] => [s.id, s]);
-      const k = await getKey();
-      return unsealAll(items, (s) => unsealSummary(k, s));
+    getSummary: async (id) => unsealSummary(await ready(), await db.get("summaries", id)),
+    async putSummary(s) {
+      const k = await ready();
+      const value = deepFreeze(structuredClone(s));
+      await db.put("summaries", await sealSummary(k, value));
+      await cacheSet(summaryCache, value.id, value);
     },
-    allAnswers,
+    getAnswers: async (id) => unseal<Answers>(await ready(), id, await db.get("answers", id)),
+    async putAnswers(id, a) {
+      const k = await ready();
+      const value = deepFreeze(structuredClone(a));
+      await db.put("answers", await encryptJson(k, value, id), id);
+      await cacheSet(answerCache, id, value);
+    },
+    async allSummaries() {
+      await ready();
+      summaryCache ??= loadSummaries();
+      return new Map(await summaryCache);
+    },
+    async allAnswers() {
+      await ready();
+      answerCache ??= loadAnswers();
+      return new Map(await answerCache);
+    },
     allLabels: async () => new Map((await db.getAll("labels")).map((l) => [l.id, l])),
     async putLabels(recs) {
       const tx = db.transaction("labels", "readwrite");
@@ -215,6 +322,7 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
     getSettings: async () => normalizeSettings(((await db.get("kv", "settings")) as StoredSettings | undefined) ?? {}, defaults),
     putSettings: async (s) => void (await db.put("kv", s, "settings")),
     getScan: async () => {
+      await ready(); // a scan saved under a lost key is cleared with its data
       const raw = (await db.get("kv", "scan")) as StoredScan | undefined;
       return raw ? normalizeScan(raw, defaults) : null;
     },
@@ -234,14 +342,6 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
       const tx = db.transaction("overrides", "readwrite");
       await Promise.all([...ids.map((id) => tx.store.delete(id)), tx.done]);
     },
-    async clearScanData() {
-      const tx = db.transaction(["summaries", "answers", "kv"], "readwrite");
-      await Promise.all([
-        tx.objectStore("summaries").clear(),
-        tx.objectStore("answers").clear(),
-        tx.objectStore("kv").delete("scan"),
-        tx.done,
-      ]);
-    },
+    clearScanData: () => clearScan(),
   };
 }

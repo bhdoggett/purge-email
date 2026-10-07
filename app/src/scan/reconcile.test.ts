@@ -48,6 +48,16 @@ function labeled(entries: Record<string, string>) {
 const empty = (plan: ReturnType<typeof planReconcile>) => plan.add.size === 0 && plan.remove.size === 0 && plan.put.length === 0 && plan.del.length === 0;
 
 describe("planReconcile", () => {
+  it("leaves the label alone on a candidate whose summary is missing", () => {
+    const plan = planReconcile(input({ a: fakeAnswers({ newsletter: 0.95 }) }, { summaries: new Map(), records: new Map([["a", rec("a", "purge/newsletter")]]), ...labeled({ a: "purge/newsletter" }) }));
+    expect(empty(plan)).toBe(true);
+  });
+
+  it("adds no label to a candidate whose summary is missing", () => {
+    const plan = planReconcile(input({ a: fakeAnswers({ newsletter: 0.95 }) }, { summaries: new Map() }));
+    expect(empty(plan)).toBe(true);
+  });
+
   it("adds the desired label and a record for a new candidate", () => {
     const plan = planReconcile(input({ a: fakeAnswers({ newsletter: 0.95 }) }));
     expect(plan.add).toEqual(new Map([["purge/newsletter", ["a"]]]));
@@ -251,15 +261,6 @@ describe("planReconcile", () => {
     expect(empty(planReconcile(input({}, { records, ...trashed })))).toBe(true);
     // A candidate with no record, in Trash with an app label: no label is added.
     expect(empty(planReconcile(input({ t: fakeAnswers({ promotion: 0.95 }) }, trashed)))).toBe(true);
-  });
-
-  it("removes the label from a candidate with no summary", () => {
-    const i = input({ a: fakeAnswers({ newsletter: 0.95 }) }, { records: new Map([["a", rec("a", "purge/newsletter")]]), ...labeled({ a: "purge/newsletter" }) });
-    i.summaries.clear();
-    const plan = planReconcile(i);
-    expect(plan.remove).toEqual(new Map([["purge/newsletter", ["a"]]]));
-    expect(plan.add.size).toBe(0);
-    expect(plan.del).toEqual(["a"]);
   });
 
   it("removes labels from candidates that are now kept", () => {

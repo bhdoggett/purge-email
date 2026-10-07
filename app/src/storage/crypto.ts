@@ -13,16 +13,23 @@ export function importDataKey(base64: string): Promise<CryptoKey> {
   return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
 }
 
-/** Encrypts `value` as JSON with AES-GCM under a fresh random IV. */
-export async function encryptJson(key: CryptoKey, value: unknown): Promise<Sealed> {
+function params(iv: Uint8Array<ArrayBuffer>, aad: string | undefined): AesGcmParams {
+  return aad === undefined ? { name: "AES-GCM", iv } : { name: "AES-GCM", iv, additionalData: new TextEncoder().encode(aad) };
+}
+
+/**
+ * Encrypts `value` as JSON with AES-GCM under a fresh random IV. `aad` (the record id) is
+ * authenticated but not stored, so a sealed value only opens under the id it was saved for.
+ */
+export async function encryptJson(key: CryptoKey, value: unknown, aad?: string): Promise<Sealed> {
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
-  const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(value)));
+  const data = await crypto.subtle.encrypt(params(iv, aad), key, new TextEncoder().encode(JSON.stringify(value)));
   return { iv, data };
 }
 
-/** Decrypts a value sealed by `encryptJson`; rejects on a wrong key or tampered data. */
-export async function decryptJson<T>(key: CryptoKey, sealed: Sealed): Promise<T> {
-  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: sealed.iv }, key, sealed.data);
+/** Decrypts a value sealed by `encryptJson` with the same `aad`; rejects on a wrong key, id, or tampered data. */
+export async function decryptJson<T>(key: CryptoKey, sealed: Sealed, aad?: string): Promise<T> {
+  const plain = await crypto.subtle.decrypt(params(sealed.iv, aad), key, sealed.data);
   return JSON.parse(new TextDecoder().decode(plain)) as T;
 }
 

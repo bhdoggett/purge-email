@@ -44,4 +44,12 @@ describe("local data crypto", () => {
     iv[0]! ^= 1;
     await expect(decryptJson(key, { iv, data: sealed.data })).rejects.toThrow();
   });
+
+  it("binds a value to its additional data", async () => {
+    const key = await importDataKey(randomKeyBase64());
+    const sealed = await encryptJson(key, { a: 1 }, "m1");
+    expect(await decryptJson(key, sealed, "m1")).toEqual({ a: 1 });
+    await expect(decryptJson(key, sealed, "m2")).rejects.toThrow();
+    await expect(decryptJson(key, sealed)).rejects.toThrow();
+  });
 });

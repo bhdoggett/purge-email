@@ -35,17 +35,13 @@ let dataKey: Promise<CryptoKey> | null = null;
 /** The key that encrypts saved emails and Jev answers, read from the Keychain once per launch. */
 function getDataKey(): Promise<CryptoKey> {
   if (!dataKey) {
-    dataKey = localDataKey().then(importDataKey);
-    dataKey.catch(() => {
-      dataKey = null;
+    const pending = localDataKey().then(importDataKey);
+    dataKey = pending;
+    pending.catch(() => {
+      if (dataKey === pending) dataKey = null;
     });
   }
   return dataKey;
-}
-
-/** Drops the cached key after Remove keys deleted it, so the next use creates a fresh one. */
-export function forgetDataKey(): void {
-  dataKey = null;
 }
 
 let services: Promise<Services> | null = null;

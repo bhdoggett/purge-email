@@ -31,34 +31,25 @@ describe("forgetSteps", () => {
 });
 
 describe("removeKeys", () => {
-  it("removes the Keychain secrets, forgets the data key, and clears scan data encrypted with it", async () => {
+  it("removes the Keychain secrets and keeps scan data", async () => {
     const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
-    const summary = { id: "m1", threadId: "t1", from: "a", to: "b", cc: "", subject: "s", date: "d", snippet: "x", labels: [], hasListUnsubscribe: false, attachmentNames: [] };
-    await store.putSummary(summary);
     await store.putAnswers("m1", { version: 1 } as never);
     await store.putScan({ ageMonths: 8, candidateIds: ["m1"], repliedThreadIds: [], finished: true, startedAt: 1, settingsAtScan: null, msPerEmail: null });
-    await store.putOverrides(["m1"], "promotion", 1);
     await store.putWizard([1, 2, 3, 4, 5, 6]);
-    const calls: string[] = [];
-    const clearSecrets = vi.fn(async () => void calls.push("clearSecrets"));
-    const forgetDataKey = vi.fn(() => void calls.push("forgetDataKey"));
+    const clearSecrets = vi.fn(async () => {});
 
-    await removeKeys(store, { clearSecrets, forgetDataKey });
+    await removeKeys(store, clearSecrets);
 
-    expect(calls).toEqual(["clearSecrets", "forgetDataKey"]);
-    expect(await store.getSummary("m1")).toBeUndefined();
-    expect((await store.allAnswers()).size).toBe(0);
-    expect(await store.getScan()).toBeNull();
-    expect((await store.allOverrides()).get("m1")?.slug).toBe("promotion");
+    expect(clearSecrets).toHaveBeenCalledOnce();
+    expect((await store.allAnswers()).size).toBe(1);
+    expect((await store.getScan())?.candidateIds).toEqual(["m1"]);
     expect(await store.getWizard()).toEqual([2, 3, 4]);
   });
 
-  it("keeps scan data when the Keychain secrets could not be removed", async () => {
+  it("still forgets the key steps when removing the secrets fails partway", async () => {
     const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
-    await store.putAnswers("m1", { version: 1 } as never);
-    const forgetDataKey = vi.fn();
-    await expect(removeKeys(store, { clearSecrets: () => Promise.reject(new Error("denied")), forgetDataKey })).rejects.toThrow("denied");
-    expect(forgetDataKey).not.toHaveBeenCalled();
-    expect((await store.allAnswers()).size).toBe(1);
+    await store.putWizard([1, 2, 3, 4, 5, 6]);
+    await expect(removeKeys(store, () => Promise.reject(new Error("denied")))).rejects.toThrow("denied");
+    expect(await store.getWizard()).toEqual([2, 3, 4]);
   });
 });

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { clearSecrets, signOut } from "../bridge/tauri.ts";
 import { Button } from "../components/Button.tsx";
-import { forgetDataKey, type Services } from "../services.ts";
+import type { Services } from "../services.ts";
 import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
 import { forgetSteps, removeKeys, SIGN_IN_STEPS } from "../wizard/steps.ts";
 import styles from "./Settings.module.css";
@@ -41,9 +41,9 @@ export function Settings({ services, email, onChanged, onBack }: { services: Ser
       <div className={styles.row}>
         <div>
           <h2 className={styles.subheading}>Saved keys</h2>
-          <p className={styles.muted}>Removes the Jev key, Google client, and the key that encrypts saved emails from the Keychain, signs you out, and clears scan data.</p>
+          <p className={styles.muted}>Removes the Jev key and Google client from the Keychain and signs you out.</p>
         </div>
-        <Button variant="danger" disabled={busy} title={hint} onClick={() => act(() => removeKeys(services.store, { clearSecrets, forgetDataKey }), "Keys and scan data removed.")}>Remove keys</Button>
+        <Button variant="danger" disabled={busy} title={hint} onClick={() => act(() => removeKeys(services.store, clearSecrets), "Keys removed.")}>Remove keys</Button>
       </div>
       <div className={styles.row}>
         <div>

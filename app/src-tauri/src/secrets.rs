@@ -14,8 +14,9 @@ pub const GMAIL_EMAIL: &str = "gmail_email";
 pub const LOCAL_DATA_KEY: &str = "local_data_key";
 /// Removed by sign out; the local data key stays so saved scan data remains readable.
 const SIGN_IN_SECRETS: [&str; 2] = [GMAIL_REFRESH, GMAIL_EMAIL];
-/// Removed by a full reset.
-const ALL_SECRETS: [&str; 5] = [JEV, GOOGLE_CLIENT, GMAIL_REFRESH, GMAIL_EMAIL, LOCAL_DATA_KEY];
+/// Removed by Remove keys. The local data key is not a credential, only the lock on saved scan
+/// data, so it stays and that data remains readable.
+const ALL_SECRETS: [&str; 4] = [JEV, GOOGLE_CLIENT, GMAIL_REFRESH, GMAIL_EMAIL];
 
 /// All secrets live in ONE Keychain item, read once per launch and cached in memory.
 /// macOS asks for permission per item and per build, so one item means one prompt
@@ -219,18 +220,20 @@ mod tests {
     }
 
     #[test]
-    fn clearing_secrets_drops_the_local_data_key_but_sign_out_keeps_it() {
-        assert!(ALL_SECRETS.contains(&LOCAL_DATA_KEY));
+    fn clearing_secrets_and_sign_out_keep_the_local_data_key() {
+        assert!(!ALL_SECRETS.contains(&LOCAL_DATA_KEY));
         assert!(!SIGN_IN_SECRETS.contains(&LOCAL_DATA_KEY));
         let mut vault = HashMap::new();
         for name in ALL_SECRETS {
             vault.insert(name.to_string(), "v".to_string());
         }
+        let (key, _) = ensure_data_key(&mut vault);
         let mut signed_out = vault.clone();
         assert!(remove_all(&mut signed_out, &SIGN_IN_SECRETS));
-        assert!(signed_out.contains_key(LOCAL_DATA_KEY));
+        assert_eq!(signed_out.get(LOCAL_DATA_KEY), Some(&key));
         assert!(remove_all(&mut vault, &ALL_SECRETS));
-        assert!(vault.is_empty());
+        assert_eq!(vault.len(), 1);
+        assert_eq!(vault.get(LOCAL_DATA_KEY), Some(&key));
         assert!(!remove_all(&mut vault, &ALL_SECRETS));
     }
 }

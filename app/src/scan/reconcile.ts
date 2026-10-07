@@ -113,7 +113,7 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
     plan.put.push(r);
   }
 
-  // 3. Desired label per id: only candidates with a summary can have one.
+  // 3. Desired label per id: only candidates with a summary can have one (step 4 skips the rest).
   const desired = new Map<string, string | null>();
   for (const id of i.candidates) {
     const s = i.summaries.get(id);
@@ -126,6 +126,9 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
   for (const id of new Set([...i.candidates, ...i.live, ...recent])) {
     const r = records.get(id);
     if (r && (r.userRemoved || r.userChosen) && !overrideWins(r)) continue;
+    // A candidate whose summary can't be read (e.g. lost with its encryption key) has no known
+    // desired label, so leave Gmail as it is rather than strip or add one.
+    if (candidateSet.has(id) && !i.summaries.has(id)) continue;
     const isLive = i.live.has(id);
     // In Trash or Spam: never changed.
     if (!isLive && i.anywhere.has(id)) continue;
