@@ -40,7 +40,7 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
       let ids: { id: string; threadId: string }[];
       if (q.startsWith("in:sent")) ids = [];
       else if (q === "in:spam") ids = fake.spamIds.map((id) => ({ id, threadId: id }));
-      else if (q.startsWith("label:")) ids = [...fake.labeled].filter((id) => !fake.trashed.has(id) && !(q.includes("-is:starred") && byId.get(id)?.labels.includes("STARRED"))).map((id) => ({ id, threadId: id }));
+      else if (q.startsWith("label:")) ids = [...fake.labeled].filter((id) => (q.includes("in:anywhere") || !fake.trashed.has(id)) && !(q.includes("-is:starred") && byId.get(id)?.labels.includes("STARRED"))).map((id) => ({ id, threadId: id }));
       else ids = messages.map((m) => ({ id: m.id, threadId: m.threadId }));
       return ids.slice(0, limit);
     },
