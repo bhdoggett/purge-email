@@ -6,8 +6,9 @@ import { GmailError } from "../gmail/client.ts";
 import { openStore } from "../storage/db.ts";
 import { isRunLevelError, ScanEngine } from "./engine.ts";
 import { createFakeGmail, fakeAnswers, idsWithLabel, makeSummary } from "./fakes.ts";
+import { USER_CHANGE_GRACE_MS } from "./reconcile.ts";
 
-async function setup(messages = [makeSummary("promo"), makeSummary("mom"), makeSummary("att", { attachmentNames: ["a.pdf"] })], extra: { labelBatch?: number; concurrency?: number } = {}) {
+async function setup(messages = [makeSummary("promo"), makeSummary("mom"), makeSummary("att", { attachmentNames: ["a.pdf"] })], extra: { labelBatch?: number; concurrency?: number; now?: () => number } = {}) {
   const store = await openStore(`t-${crypto.randomUUID()}`);
   const gmail = createFakeGmail(messages);
   const judge = vi.fn(async (f: { subject: string }) =>
@@ -25,10 +26,10 @@ describe("ScanEngine", () => {
     const p = engine.getProgress();
     expect(p.stage).toBe("done");
     expect(p.counts).toEqual({ purge: 1, keep: 2, review: 0, failed: 0 });
-    expect(idsWithLabel(gmail, "purge-test")).toEqual(["promo"]);
+    expect(idsWithLabel(gmail, "purge/promotion")).toEqual(["promo"]);
     expect(judge).toHaveBeenCalledTimes(2);
     expect(p.costUsd).toBeCloseTo((2 * 1000 * 0.042) / 1_000_000);
-    expect((await store.allLabels()).get("promo")?.label).toBe("purge-test");
+    expect((await store.allLabels()).get("promo")?.label).toBe("purge/promotion");
     expect((await store.getScan())?.finished).toBe(true);
     expect((await store.getScan())?.settingsAtScan).toEqual(DEFAULT_SETTINGS);
     expect(p.recent[0]?.id).toBeDefined();
@@ -207,18 +208,18 @@ describe("ScanEngine", () => {
   it("removes stale labels when a rescan uses rules that no longer purge them", async () => {
     const { gmail, engine, store } = await setup();
     await engine.start(DEFAULT_SETTINGS);
-    expect(idsWithLabel(gmail, "purge-test")).toEqual(["promo"]);
+    expect(idsWithLabel(gmail, "purge/promotion")).toEqual(["promo"]);
 
     const narrower = { ...DEFAULT_SETTINGS, purgeKinds: DEFAULT_SETTINGS.purgeKinds.filter((k) => k !== "promotion") };
     await engine.start(narrower);
     expect(engine.getProgress().stage).toBe("done");
-    expect(idsWithLabel(gmail, "purge-test")).toEqual([]);
+    expect(idsWithLabel(gmail, "purge/promotion")).toEqual([]);
     expect((await store.getScan())?.settingsAtScan).toEqual(narrower);
     expect((await store.allLabels()).has("promo")).toBe(false);
 
     // The app removed it, not the user, so going back to the old rules labels it again.
     await engine.start(DEFAULT_SETTINGS);
-    expect(idsWithLabel(gmail, "purge-test")).toEqual(["promo"]);
+    expect(idsWithLabel(gmail, "purge/promotion")).toEqual(["promo"]);
   });
 
   it("removes the label from an earlier-labeled email that the raised age no longer covers", async () => {
@@ -226,19 +227,21 @@ describe("ScanEngine", () => {
     gmail.ages.set("old", 15);
     gmail.ages.set("recent", 6);
     await engine.start({ ...DEFAULT_SETTINGS, years: 5 });
-    expect(idsWithLabel(gmail, "purge-test").sort()).toEqual(["old", "recent"]);
+    expect(idsWithLabel(gmail, "purge/promotion").sort()).toEqual(["old", "recent"]);
 
     await engine.start({ ...DEFAULT_SETTINGS, years: 10 });
     expect((await store.getScan())?.candidateIds).toEqual(["old"]);
-    expect(idsWithLabel(gmail, "purge-test")).toEqual(["old"]);
+    expect(idsWithLabel(gmail, "purge/promotion")).toEqual(["old"]);
   });
 
   it("does not re-add a label the user removed between scans", async () => {
-    const { gmail, engine, store } = await setup();
+    let now = 0;
+    const { gmail, engine, store } = await setup(undefined, { now: () => now });
     await engine.start(DEFAULT_SETTINGS);
     gmail.labelsOf.delete("promo");
+    now += USER_CHANGE_GRACE_MS;
     await engine.start(DEFAULT_SETTINGS);
-    expect(idsWithLabel(gmail, "purge-test").includes("promo")).toBe(false);
+    expect(idsWithLabel(gmail, "purge/promotion").includes("promo")).toBe(false);
     expect((await store.allLabels()).get("promo")?.userRemoved).toBe(true);
   });
 

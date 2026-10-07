@@ -4,7 +4,7 @@ import type { Settings } from "@core/decide.ts";
 import type { Screen } from "../App.tsx";
 import { Button } from "../components/Button.tsx";
 import { ConfirmDialog } from "../components/ConfirmDialog.tsx";
-import { settingsEqual, summarize, syncLabels } from "../scan/syncLabels.ts";
+import { reconcile, settingsEqual, summarize } from "../scan/reconcile.ts";
 import type { Services } from "../services.ts";
 import styles from "./Review.module.css";
 
@@ -50,8 +50,8 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
     setUpdating(true);
     setMessage(null);
     try {
-      const r = await syncLabels({ gmail, store, labelName }, settings);
-      setMessage(`Added ${r.added} labels and removed ${r.removed}.`);
+      const r = await reconcile({ gmail, store }, settings);
+      setMessage(`Moved ${r.moved}, added ${r.added}, removed ${r.removed}.`);
       await load();
     } catch (e) {
       setError(`Could not update the labels. ${errorText(e)}`);

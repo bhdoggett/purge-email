@@ -7,7 +7,7 @@ import { AppError, errorAndCause, SignInExpiredError } from "../bridge/errors.ts
 import { GmailError, type Gmail, type Summary } from "../gmail/client.ts";
 import type { Judge } from "../jev/client.ts";
 import type { LabelRecord, ScanRecord, Store } from "../storage/db.ts";
-import { syncLabels } from "./syncLabels.ts";
+import { reconcile } from "./reconcile.ts";
 import { FEED_SIZE, INITIAL_PROGRESS, JEV_USD_PER_TOKEN, Pace, type Progress } from "./progress.ts";
 
 export interface EngineDeps {
@@ -231,7 +231,7 @@ export class ScanEngine {
       } else {
         // Labels from an earlier scan may no longer match these settings or candidates:
         // reconcile so Gmail holds exactly the current purge decisions.
-        await syncLabels({ gmail, store, labelName }, settings);
+        await reconcile({ gmail, store, now: () => this.now() }, settings);
         await store.putScan({ ...scan, finished: true, settingsAtScan: settings, msPerEmail });
         this.set({ stage: "done", etaMs: null, rateLimitUntil: null });
         this.deps.notify?.("Scan finished", `${this.progress.counts.purge} emails labeled for review.`);
