@@ -82,6 +82,7 @@ export interface EmailFacts {
   ownerReplied: boolean;
   hasListUnsubscribe: boolean;
   labels: string[];
+  attachmentNames: string[];
 }
 
 export function buildState(f: EmailFacts) {
@@ -91,6 +92,7 @@ export function buildState(f: EmailFacts) {
       ownerRepliedInThisThread: f.ownerReplied,
       hasListUnsubscribeHeader: f.hasListUnsubscribe,
       gmailLabels: f.labels,
+      attachmentFileNames: f.attachmentNames,
     },
   };
 }

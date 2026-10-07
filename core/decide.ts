@@ -15,6 +15,9 @@ export interface Settings {
   protects: ProtectId[];
   years: number;
   strictness: Strictness;
+  labelPrefix: string;
+  keepAttachments: boolean;
+  keepStarred: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -22,6 +25,9 @@ export const DEFAULT_SETTINGS: Settings = {
   protects: PROTECTS.map((p) => p.id),
   years: 10,
   strictness: "balanced",
+  labelPrefix: "purge",
+  keepAttachments: true,
+  keepStarred: true,
 };
 
 export type Decision = "purge" | "keep" | "review";
@@ -36,8 +42,8 @@ export function decide(
   answers: Answers | null,
   settings: Settings,
 ): { decision: Decision; reason: string } {
-  if (flags.starred) return { decision: "keep", reason: "starred" };
-  if (flags.attachmentCount > 0) return { decision: "keep", reason: "attachment" };
+  if (flags.starred && settings.keepStarred) return { decision: "keep", reason: "starred" };
+  if (flags.attachmentCount > 0 && settings.keepAttachments) return { decision: "keep", reason: "attachment" };
   if (!answers || answers.version !== QUESTIONS_VERSION) return { decision: "review", reason: "not judged" };
 
   const { purgeAt, protectAt } = STRICTNESS[settings.strictness];

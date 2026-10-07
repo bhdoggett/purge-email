@@ -1,5 +1,6 @@
 import pLimit from "p-limit";
-import { decide, type Settings } from "@core/decide.ts";
+import { decide, DEFAULT_SETTINGS, type Settings } from "@core/decide.ts";
+import { candidateQuery as buildCandidateQuery } from "@core/labels.ts";
 import { type Answers, QUESTIONS_VERSION } from "@core/questions.ts";
 import { APIError } from "@typesafe-ai/sdk";
 import { AppError, errorAndCause, SignInExpiredError } from "../bridge/errors.ts";
@@ -44,7 +45,7 @@ async function settleAll(tasks: Promise<unknown>[]): Promise<void> {
 }
 
 export function candidateQuery(years: number): string {
-  return `older_than:${years}y -has:attachment -is:starred -in:spam -in:trash -in:chats`;
+  return buildCandidateQuery({ ...DEFAULT_SETTINGS, years });
 }
 
 export class ScanEngine {

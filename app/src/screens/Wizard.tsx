@@ -16,7 +16,7 @@ const STEPS: { n: Step; title: string }[] = [
   { n: 6, title: "Sign in with Google" },
 ];
 
-const TEST_EMAIL = { from: "Example Store <deals@example.com>", to: "me", cc: "", subject: "Weekend sale", date: "2014", snippet: "50% off everything", ownerReplied: false, hasListUnsubscribe: true, labels: [] };
+const TEST_EMAIL = { from: "Example Store <deals@example.com>", to: "me", cc: "", subject: "Weekend sale", date: "2014", snippet: "50% off everything", ownerReplied: false, hasListUnsubscribe: true, labels: [], attachmentNames: [] };
 
 export interface WizardProps {
   services: Services;

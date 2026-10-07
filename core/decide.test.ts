@@ -61,4 +61,9 @@ describe("decide", () => {
   it("keeps mail whose purge score is below the review threshold", () => {
     expect(decide(plain, answers({ none: 0.8, promotion: 0.2 }), DEFAULT_SETTINGS).decision).toBe("keep");
   });
+
+  it("judges starred and attachment mail normally when protection is off", () => {
+    const s = { ...DEFAULT_SETTINGS, keepStarred: false, keepAttachments: false };
+    expect(decide({ starred: true, attachmentCount: 1 }, answers({ promotion: 0.95 }), s).decision).toBe("purge");
+  });
 });

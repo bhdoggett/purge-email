@@ -24,8 +24,13 @@ describe("toAnswers", () => {
 
 describe("buildState", () => {
   it("keeps empty headers as empty strings", () => {
-    const s = buildState({ from: "", to: "", cc: "", subject: "", date: "", snippet: "", ownerReplied: false, hasListUnsubscribe: false, labels: [] });
+    const s = buildState({ from: "", to: "", cc: "", subject: "", date: "", snippet: "", ownerReplied: false, hasListUnsubscribe: false, labels: [], attachmentNames: [] });
     expect(s.email.subject).toBe("");
     expect(s.facts.ownerRepliedInThisThread).toBe(false);
+  });
+
+  it("passes attachment file names through", () => {
+    const s = buildState({ from: "", to: "", cc: "", subject: "", date: "", snippet: "", ownerReplied: false, hasListUnsubscribe: false, labels: [], attachmentNames: ["a.pdf", "b.png"] });
+    expect(s.facts.attachmentFileNames).toEqual(["a.pdf", "b.png"]);
   });
 });
