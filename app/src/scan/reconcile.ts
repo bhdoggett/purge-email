@@ -169,19 +169,16 @@ async function idsOf(gmail: Gmail, labelId: string, includeSpamTrash: boolean): 
   return (await gmail.listIds("", Infinity, { labelIds: [labelId], includeSpamTrash })).map((m) => m.id);
 }
 
-/**
- * Brings the app's labels in Gmail in line with `settings` over the current scan's candidates.
- * `added` and `removed` count ids that only gained or only lost a label; `moved` counts ids that did both.
- */
-export async function reconcile(
-  deps: { gmail: Gmail; store: Store; now?: () => number },
-  settings: Settings,
-): Promise<{ added: number; removed: number; moved: number; userRemoved: number; userChosen: number; deferred: number }> {
-  const { gmail, store } = deps;
-  const now = (deps.now ?? Date.now)();
-  const scan = await store.getScan();
-  const records = await store.allLabels();
+export interface GmailLabelState {
+  labelIds: Map<string, string>; // label name → Gmail label id, for labels that exist
+  /** id → app label name on the message anywhere (Trash and Spam included). */
+  anywhere: Map<string, string>;
+  /** ids carrying an app label outside Trash and Spam. */
+  live: Set<string>;
+}
 
+/** Reads which app labels (current prefix plus any recorded) are on which messages in Gmail. */
+export async function readGmailState(gmail: Gmail, settings: Settings, records: Map<string, LabelRecord>): Promise<GmailLabelState> {
   const names = new Set([...appLabelNames(settings.labelPrefix), ...[...records.values()].map((r) => r.label)]);
   const labelIds = new Map<string, string>();
   const labelsOn = new Map<string, string[]>();
@@ -199,6 +196,43 @@ export async function reconcile(
     const recorded = records.get(id)?.label;
     anywhere.set(id, recorded !== undefined && labels.includes(recorded) ? recorded : labels[0]!);
   }
+  return { labelIds, anywhere, live };
+}
+
+export interface Preview {
+  plan: ReconcilePlan;
+  added: number;
+  removed: number;
+  moved: number;
+  /** Label name → how many emails outside Trash and Spam it will hold after Apply. Labels with none left out. */
+  totals: Map<string, number>;
+  /** Prefixes of labels the plan empties that are not under the current prefix (old names after a rename). */
+  oldPrefixes: string[];
+  gmail: GmailLabelState;
+}
+
+export const isPending = (p: Pick<Preview, "added" | "removed" | "moved">): boolean => p.added + p.removed + p.moved > 0;
+
+export function labelTotalsAfter(live: Set<string>, anywhere: Map<string, string>, plan: ReconcilePlan): Map<string, number> {
+  const after = new Map<string, string>();
+  for (const id of live) after.set(id, anywhere.get(id)!);
+  for (const [name, ids] of plan.remove) for (const id of ids) if (after.get(id) === name) after.delete(id);
+  for (const [name, ids] of plan.add) for (const id of ids) after.set(id, name);
+  const totals = new Map<string, number>();
+  for (const name of after.values()) totals.set(name, (totals.get(name) ?? 0) + 1);
+  return totals;
+}
+
+/**
+ * Works out what `reconcile` would change in Gmail, without writing anything.
+ * `added` and `removed` count ids that only gained or only lost a label; `moved` counts ids that did both.
+ */
+export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?: () => number }, settings: Settings): Promise<Preview> {
+  const { gmail, store } = deps;
+  const now = (deps.now ?? Date.now)();
+  const scan = await store.getScan();
+  const records = await store.allLabels();
+  const state = await readGmailState(gmail, settings, records);
 
   const plan = planReconcile({
     now,
@@ -207,11 +241,32 @@ export async function reconcile(
     summaries: await store.allSummaries(),
     answers: await store.allAnswers(),
     records,
-    anywhere,
-    live,
+    anywhere: state.anywhere,
+    live: state.live,
     overrides: await store.allOverrides(),
   });
 
+  const added = new Set([...plan.add.values()].flat());
+  const removed = new Set([...plan.remove.values()].flat());
+  const moved = [...added].filter((id) => removed.has(id)).length;
+  const oldPrefixes = [
+    ...new Set([...plan.remove.keys()].map((name) => name.slice(0, name.lastIndexOf("/"))).filter((prefix) => prefix !== settings.labelPrefix)),
+  ];
+  return {
+    plan,
+    added: added.size - moved,
+    removed: removed.size - moved,
+    moved,
+    totals: labelTotalsAfter(state.live, state.anywhere, plan),
+    oldPrefixes,
+    gmail: state,
+  };
+}
+
+/** Writes a previewed plan to Gmail and the store. */
+export async function applyPreview(deps: { gmail: Gmail; store: Store }, settings: Settings, preview: Preview): Promise<void> {
+  const { gmail, store } = deps;
+  const { plan } = preview;
   // Add before remove: if this stops halfway, an email has two labels rather than none.
   for (const [name, ids] of plan.add) {
     const labelId = await gmail.ensureLabel(name).catch((err: unknown) => {
@@ -221,17 +276,23 @@ export async function reconcile(
   }
   for (const [name, ids] of plan.remove) {
     // A label the user deleted from Gmail is already off every email.
-    const labelId = labelIds.get(name);
+    const labelId = preview.gmail.labelIds.get(name);
     if (labelId !== undefined) await gmail.removeLabel(labelId, ids);
   }
   await store.putLabels(plan.put);
   await store.deleteLabels(plan.del);
+  const scan = await store.getScan();
   if (scan) await store.putScan({ ...scan, settingsAtScan: settings, deferred: plan.deferred });
+}
 
-  const added = new Set([...plan.add.values()].flat());
-  const removed = new Set([...plan.remove.values()].flat());
-  const moved = [...added].filter((id) => removed.has(id)).length;
-  return { added: added.size - moved, removed: removed.size - moved, moved, userRemoved: plan.userRemoved, userChosen: plan.userChosen, deferred: plan.deferred };
+/** Brings the app's labels in Gmail in line with `settings` over the current scan's candidates. */
+export async function reconcile(
+  deps: { gmail: Gmail; store: Store; now?: () => number },
+  settings: Settings,
+): Promise<{ added: number; removed: number; moved: number; userRemoved: number; userChosen: number; deferred: number }> {
+  const p = await previewReconcile(deps, settings);
+  await applyPreview(deps, settings, p);
+  return { added: p.added, removed: p.removed, moved: p.moved, userRemoved: p.plan.userRemoved, userChosen: p.plan.userChosen, deferred: p.plan.deferred };
 }
 
 /**

@@ -6,7 +6,7 @@ import { type LabelRecord, openStore } from "../storage/db.ts";
 import { createFakeGmail, fakeAnswers, idsWithLabel, makeSummary } from "./fakes.ts";
 import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
-import { countByLabel, planReconcile, prefixInUseByUser, type ReconcileInput, reconcile, settingsEqual, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
+import { applyPreview, countByLabel, labelTotalsAfter, planReconcile, prefixInUseByUser, previewReconcile, type ReconcileInput, reconcile, settingsEqual, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
 
 const NOW = 10_000_000;
 const OLD = NOW - USER_CHANGE_GRACE_MS;
@@ -583,5 +583,54 @@ describe("settingsEqual", () => {
     expect(settingsEqual(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, keepAttachments: false })).toBe(false);
     expect(settingsEqual(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, keepStarred: false })).toBe(false);
     expect(settingsEqual(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, years: 5 })).toBe(false);
+  });
+});
+
+describe("labelTotalsAfter", () => {
+  it("counts live labels after adds and removes", () => {
+    const plan = planReconcile(
+      input(
+        { a: fakeAnswers({ newsletter: 0.95 }), b: fakeAnswers({ promotion: 0.95 }) },
+        { ...labeled({ a: "purge/promotion", c: "purge/promotion" }), records: new Map([["a", rec("a", "purge/promotion")]]) },
+      ),
+    );
+    // a (recorded) moves promotion → newsletter, b gains promotion, c is unrecorded so it's the user's and stays.
+    expect(labelTotalsAfter(new Set(["a", "c"]), new Map([["a", "purge/promotion"], ["c", "purge/promotion"]]), plan)).toEqual(
+      new Map([["purge/promotion", 2], ["purge/newsletter", 1]]),
+    );
+  });
+});
+
+describe("previewReconcile", () => {
+  async function arrange() {
+    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const gmail = createFakeGmail([makeSummary("a")]);
+    await store.putSummary(makeSummary("a"));
+    await store.putAnswers("a", fakeAnswers({ promotion: 0.97 }));
+    await store.putScan({ years: 10, settings: DEFAULT_SETTINGS, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: null });
+    return { store, gmail };
+  }
+
+  it("plans without writing, and applyPreview writes the plan", async () => {
+    const { store, gmail } = await arrange();
+    const preview = await previewReconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);
+    expect(preview).toMatchObject({ added: 1, removed: 0, moved: 0 });
+    expect(preview.totals).toEqual(new Map([["purge/promotion", 1]]));
+    expect(idsWithLabel(gmail, "purge/promotion")).toEqual([]);
+    expect((await store.allLabels()).size).toBe(0);
+
+    await applyPreview({ gmail, store }, DEFAULT_SETTINGS, preview);
+    expect(idsWithLabel(gmail, "purge/promotion")).toEqual(["a"]);
+    expect((await store.allLabels()).get("a")?.label).toBe("purge/promotion");
+  });
+
+  it("names the old prefix whose labels a rename empties", async () => {
+    const { store, gmail } = await arrange();
+    const oldId = await gmail.ensureLabel("purge/promotion");
+    await gmail.addLabel(oldId, ["a"]);
+    await store.putLabels([rec("a", "purge/promotion")]);
+    const preview = await previewReconcile({ gmail, store, now: () => NOW }, { ...DEFAULT_SETTINGS, labelPrefix: "new" });
+    expect(preview.oldPrefixes).toEqual(["purge"]);
+    expect(preview.moved).toBe(1);
   });
 });
