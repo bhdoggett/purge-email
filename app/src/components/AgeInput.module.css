@@ -11,8 +11,9 @@
   background: var(--color-surface);
   color: var(--color-text);
 }
+/* Room for the "any age" placeholder plus the number spinner. */
 .age input.control {
-  width: 5em;
+  width: 7.5em;
 }
 .any {
   color: var(--color-muted);
