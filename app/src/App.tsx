@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { type SecretsStatus, secretsStatus } from "./bridge/tauri.ts";
 import { Button } from "./components/Button.tsx";
 import { Header, type NavTarget } from "./components/Header.tsx";
+import { type StageAvailability, stageAvailability } from "./stages.ts";
 import { StepNav } from "./components/StepNav.tsx";
 import { Review } from "./screens/Review.tsx";
 import { Rules } from "./screens/Rules.tsx";
@@ -50,6 +51,16 @@ function Shell({ services }: { services: Services }) {
   const [wizardTarget, setWizardTarget] = useState<WizardTarget>({});
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [available, setAvailable] = useState<StageAvailability>({ rules: true, scan: false, review: false });
+
+  // Scan is reachable once a scan exists; Results once a scan has finished at least once.
+  // Re-checked on every screen change and scan stage change (e.g. after Clear scan data).
+  useEffect(() => {
+    void services.store.getScan().then(
+      (scan) => setAvailable(stageAvailability(scan, services.engine.isBusy())),
+      () => setAvailable({ rules: true, scan: services.engine.isBusy(), review: false }),
+    );
+  }, [services, screen, progress.stage]);
 
   const refresh = useCallback(async () => {
     const s = await secretsStatus();
@@ -106,6 +117,7 @@ function Shell({ services }: { services: Services }) {
         email={status.gmailEmail}
         screen={screen}
         onNavigate={hasCredentials(status) ? (target) => go(target) : null}
+        available={available}
         onSettings={() => go("settings")}
       />
       <main className={styles.main}>
@@ -119,7 +131,7 @@ function Shell({ services }: { services: Services }) {
         {screen === "review" && <Review services={services} go={go} />}
       </main>
       {(screen === "rules" || screen === "scan" || screen === "review") && hasCredentials(status) && (
-        <StepNav screen={screen as NavTarget} onNavigate={(target) => go(target)} />
+        <StepNav screen={screen as NavTarget} onNavigate={(target) => go(target)} available={available} />
       )}
     </div>
   );

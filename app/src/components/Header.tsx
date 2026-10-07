@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Progress } from "../scan/progress.ts";
 import { currentTheme, otherTheme, setTheme } from "../theme.ts";
+import { UNAVAILABLE_HINT } from "../stages.ts";
 import styles from "./Header.module.css";
 
 const ACTIVE = new Set(["finding", "judging", "labeling"]);
@@ -21,9 +22,11 @@ interface Props {
   /** Null hides the tabs, e.g. before setup is finished. */
   onNavigate: ((target: NavTarget) => void) | null;
   onSettings: () => void;
+  /** Stages that can be opened; others are shown greyed out. */
+  available: Record<NavTarget, boolean>;
 }
 
-export function Header({ progress, email, screen, onNavigate, onSettings }: Props) {
+export function Header({ progress, email, screen, onNavigate, onSettings, available }: Props) {
   const active = ACTIVE.has(progress.stage);
   const [theme, setThemeState] = useState(currentTheme);
   // With no stored choice the theme follows the system, so keep the toggle's label in step with it.
@@ -58,6 +61,8 @@ export function Header({ progress, email, screen, onNavigate, onSettings }: Prop
                   type="button"
                   className={[styles.tab, screen === item.id && styles.current].filter(Boolean).join(" ")}
                   aria-current={screen === item.id ? "step" : undefined}
+                  disabled={!available[item.id]}
+                  title={available[item.id] ? undefined : UNAVAILABLE_HINT[item.id]}
                   onClick={() => onNavigate(item.id)}
                 >
                   <span className={styles.num}>{i + 1}</span>

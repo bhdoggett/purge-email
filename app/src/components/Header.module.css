@@ -86,3 +86,10 @@
   cursor: pointer;
   text-decoration: underline;
 }
+.tab:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.tab:disabled:hover {
+  color: var(--color-muted);
+}

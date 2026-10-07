@@ -25,3 +25,16 @@
   font-size: var(--text-sm);
   color: var(--color-muted);
 }
+.button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.nextGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.hint {
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+}
