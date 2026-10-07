@@ -8,7 +8,8 @@ import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
 import { applyPreview, countByLabel, isPending, labelTotalsAfter, planReconcile, prefixInUseByUser, previewReconcile, type ReconcileInput, reconcile, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
 
-const NOW = 10_000_000;
+/** A real date, so mail dated 2014 (the makeSummary default) is old enough for the default age. */
+const NOW = new Date(2026, 9, 7, 12).getTime();
 const OLD = NOW - USER_CHANGE_GRACE_MS;
 /** Labeled one second before NOW: inside the grace window. */
 const JUST = NOW - 1000;
@@ -380,6 +381,51 @@ describe("planReconcile with overrides", () => {
   });
 });
 
+describe("planReconcile: narrower rules without a rescan", () => {
+  const yearOld = makeSummary("a", { date: new Date(2025, 9, 7).toUTCString() });
+  const promo = { a: fakeAnswers({ promotion: 0.97 }) };
+
+  it("removes a recorded label from mail that is now too new after the age is raised", () => {
+    // Scanned at any age (0) and labeled; the age is now 60 months, so a 1-year-old email is kept.
+    const plan = planReconcile(
+      input(promo, { summaries: new Map([["a", yearOld]]), settings: { ...DEFAULT_SETTINGS, ageMonths: 60 }, records: new Map([["a", rec("a", "purge/promotion")]]), ...labeled({ a: "purge/promotion" }) }),
+    );
+    expect(plan.remove).toEqual(new Map([["purge/promotion", ["a"]]]));
+    expect(plan.add.size).toBe(0);
+    expect(plan.del).toEqual(["a"]);
+  });
+
+  it("keeps an override on mail that is too new", () => {
+    const plan = planReconcile(
+      input(promo, {
+        summaries: new Map([["a", yearOld]]),
+        settings: { ...DEFAULT_SETTINGS, ageMonths: 60 },
+        records: new Map([["a", rec("a", "purge/promotion")]]),
+        overrides: new Map([["a", { id: "a", slug: "promotion", at: NOW - 1 }]]),
+        ...labeled({ a: "purge/promotion" }),
+      }),
+    );
+    expect(plan.remove.size).toBe(0);
+    expect(plan.del).toEqual([]);
+  });
+
+  it("adds no label to new mail that is too new", () => {
+    const plan = planReconcile(input(promo, { summaries: new Map([["a", yearOld]]), settings: { ...DEFAULT_SETTINGS, ageMonths: 60 } }));
+    expect(plan.add.size).toBe(0);
+  });
+
+  it("uses the age it is given at 0 months and labels mail of any age", () => {
+    const plan = planReconcile(input(promo, { summaries: new Map([["a", yearOld]]), settings: { ...DEFAULT_SETTINGS, ageMonths: 0 } }));
+    expect(plan.add).toEqual(new Map([["purge/promotion", ["a"]]]));
+  });
+
+  it("removes a recorded label from starred mail once starred mail is kept again", () => {
+    const starred = makeSummary("a", { labels: ["STARRED"] });
+    const plan = planReconcile(input(promo, { summaries: new Map([["a", starred]]), records: new Map([["a", rec("a", "purge/promotion")]]), ...labeled({ a: "purge/promotion" }) }));
+    expect(plan.remove).toEqual(new Map([["purge/promotion", ["a"]]]));
+  });
+});
+
 describe("reconcile", () => {
   it("moves labels in Gmail to match changed purge kinds and saves the records", async () => {
     const store = await openStore(`t-${crypto.randomUUID()}`);
@@ -388,7 +434,7 @@ describe("reconcile", () => {
     for (const m of msgs) await store.putSummary(m);
     await store.putAnswers("news", fakeAnswers({ newsletter: 0.95 }));
     await store.putAnswers("promo", fakeAnswers({ promotion: 0.35, social: 0.3, newsletter: 0.2 }));
-    await store.putScan({ years: 10, candidateIds: ["news", "promo"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
+    await store.putScan({ ageMonths: 120, candidateIds: ["news", "promo"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
 
     const first = await reconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);
     expect(first).toEqual({ added: 2, removed: 0, moved: 0, userRemoved: 0, userChosen: 0, deferred: 0 });
@@ -415,7 +461,7 @@ describe("reconcile", () => {
     const gmail = createFakeGmail([makeSummary("a")]);
     await store.putSummary(makeSummary("a"));
     await store.putAnswers("a", fakeAnswers({ newsletter: 0.95 }));
-    await store.putScan({ years: 10, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
+    await store.putScan({ ageMonths: 120, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
     // Just labeled purge/promotion, but that label no longer exists in Gmail.
     await store.putLabels([rec("a", "purge/promotion", { labeledAt: JUST })]);
     const addLabel = vi.spyOn(gmail, "addLabel");
@@ -436,7 +482,7 @@ describe("reconcile", () => {
   it("keeps an app-named label it has no record of and records it as the user's", async () => {
     const store = await openStore(`t-${crypto.randomUUID()}`);
     const gmail = createFakeGmail([makeSummary("mine")]);
-    await store.putScan({ years: 10, candidateIds: [], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
+    await store.putScan({ ageMonths: 120, candidateIds: [], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
     gmail.labelsOf.set("mine", new Set(["purge/work"]));
     const r = await reconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);
     expect(r).toMatchObject({ added: 0, removed: 0, moved: 0 });
@@ -449,7 +495,7 @@ describe("reconcile", () => {
     const gmail = createFakeGmail([makeSummary("a")]);
     await store.putSummary(makeSummary("a"));
     await store.putAnswers("a", fakeAnswers({ newsletter: 0.95 }));
-    await store.putScan({ years: 10, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
+    await store.putScan({ ageMonths: 120, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
     for (const status of [400, 409]) {
       gmail.ensureLabel = async () => {
         throw new GmailError(status, "invalidArgument", "Invalid label name");
@@ -472,7 +518,7 @@ describe("reconcile", () => {
       await store.putSummary(m);
       await store.putAnswers(m.id, fakeAnswers({ newsletter: 0.95 }));
     }
-    await store.putScan({ years: 10, candidateIds: ["trashed", "removed"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
+    await store.putScan({ ageMonths: 120, candidateIds: ["trashed", "removed"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
     await store.putLabels([rec("trashed", "purge/newsletter"), rec("removed", "purge/newsletter")]);
     gmail.labelsOf.set("trashed", new Set(["purge/newsletter"]));
     gmail.trashed.add("trashed");
@@ -542,7 +588,7 @@ describe("summarize", () => {
     await store.putAnswers("news", fakeAnswers({ newsletter: 0.95 }));
     await store.putAnswers("promo", fakeAnswers({ promotion: 0.95 }));
     await store.putAnswers("other", fakeAnswers({ promotion: 0.95 }));
-    await store.putScan({ years: 10, candidateIds: ["news", "promo", "other"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
+    await store.putScan({ ageMonths: 120, candidateIds: ["news", "promo", "other"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
     expect(await summarize(store, { ...DEFAULT_SETTINGS, purgeKinds: ["newsletter"] })).toEqual({ purge: 1, keep: 2, review: 0 });
   });
 
@@ -550,9 +596,18 @@ describe("summarize", () => {
     const store = await openStore(`t-${crypto.randomUUID()}`);
     await store.putSummary(makeSummary("s", { labels: ["STARRED"] }));
     await store.putAnswers("s", fakeAnswers({ promotion: 0.95 }));
-    await store.putScan({ years: 10, candidateIds: ["s"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
+    await store.putScan({ ageMonths: 120, candidateIds: ["s"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
     expect(await summarize(store, DEFAULT_SETTINGS)).toEqual({ purge: 0, keep: 1, review: 0 });
     expect(await summarize(store, { ...DEFAULT_SETTINGS, keepStarred: false })).toEqual({ purge: 1, keep: 0, review: 0 });
+  });
+
+  it("counts mail newer than the age as keep", async () => {
+    const store = await openStore(`t-${crypto.randomUUID()}`);
+    await store.putSummary(makeSummary("a", { date: new Date(2025, 9, 7).toUTCString() }));
+    await store.putAnswers("a", fakeAnswers({ promotion: 0.95 }));
+    await store.putScan({ ageMonths: 0, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
+    expect(await summarize(store, { ...DEFAULT_SETTINGS, ageMonths: 60 }, NOW)).toEqual({ purge: 0, keep: 1, review: 0 });
+    expect(await summarize(store, { ...DEFAULT_SETTINGS, ageMonths: 6 }, NOW)).toEqual({ purge: 1, keep: 0, review: 0 });
   });
 
   it("counts overrides by their label: no label is keep, maybe is review, any other is purge", async () => {
@@ -561,7 +616,7 @@ describe("summarize", () => {
       await store.putSummary(makeSummary(id));
       await store.putAnswers(id, fakeAnswers({ promotion: 0.95 }));
     }
-    await store.putScan({ years: 10, candidateIds: ["a", "b", "c"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
+    await store.putScan({ ageMonths: 120, candidateIds: ["a", "b", "c"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
     await store.putOverrideList([
       { id: "a", slug: null, at: 1 },
       { id: "b", slug: "maybe", at: 1 },
@@ -591,7 +646,7 @@ describe("previewReconcile", () => {
     const gmail = createFakeGmail([makeSummary("a")]);
     await store.putSummary(makeSummary("a"));
     await store.putAnswers("a", fakeAnswers({ promotion: 0.97 }));
-    await store.putScan({ years: 10, settings: DEFAULT_SETTINGS, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: null });
+    await store.putScan({ ageMonths: 120, settings: DEFAULT_SETTINGS, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: null });
     return { store, gmail };
   }
 

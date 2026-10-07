@@ -1,5 +1,5 @@
 import { type DBSchema, openDB } from "idb";
-import { DEFAULT_SETTINGS, type Settings } from "@core/decide.ts";
+import { DEFAULT_SETTINGS, normalizeSettings, type Settings } from "@core/decide.ts";
 import type { Answers } from "@core/questions.ts";
 import type { Summary } from "../gmail/client.ts";
 
@@ -19,7 +19,7 @@ export interface Override {
 }
 
 export interface ScanRecord {
-  years: number;
+  ageMonths: number;
   /** Settings the candidate list was built with; missing on scans saved before category labels. */
   settings?: Settings;
   candidateIds: string[];
@@ -64,6 +64,26 @@ export interface Store {
   clearScanData(): Promise<void>;
 }
 
+type StoredSettings = Partial<Settings> & { years?: number };
+/** A scan as saved by any version; older ones carry `years` instead of `ageMonths`. */
+type StoredScan = Omit<ScanRecord, "ageMonths" | "settings" | "settingsAtScan"> & {
+  ageMonths?: number;
+  years?: number;
+  settings?: StoredSettings;
+  settingsAtScan: StoredSettings | null;
+};
+
+function normalizeScan(raw: StoredScan, defaults: Settings): ScanRecord {
+  const { years, ageMonths, settings, settingsAtScan, ...rest } = raw;
+  const scan: ScanRecord = {
+    ...rest,
+    ageMonths: ageMonths ?? (typeof years === "number" ? years * 12 : defaults.ageMonths),
+    settingsAtScan: settingsAtScan ? normalizeSettings(settingsAtScan, defaults) : null,
+  };
+  if (settings) scan.settings = normalizeSettings(settings, defaults);
+  return scan;
+}
+
 export async function openStore(name = "purge-email", defaults: Settings = DEFAULT_SETTINGS): Promise<Store> {
   const db = await openDB<PurgeDB>(name, 3, {
     async upgrade(db, oldVersion, _newVersion, tx) {
@@ -105,9 +125,12 @@ export async function openStore(name = "purge-email", defaults: Settings = DEFAU
       const tx = db.transaction("labels", "readwrite");
       await Promise.all([...ids.map((id) => tx.store.delete(id)), tx.done]);
     },
-    getSettings: async () => ({ ...defaults, ...((await db.get("kv", "settings")) as Partial<Settings> | undefined) }),
+    getSettings: async () => normalizeSettings(((await db.get("kv", "settings")) as StoredSettings | undefined) ?? {}, defaults),
     putSettings: async (s) => void (await db.put("kv", s, "settings")),
-    getScan: async () => ((await db.get("kv", "scan")) as ScanRecord | undefined) ?? null,
+    getScan: async () => {
+      const raw = (await db.get("kv", "scan")) as StoredScan | undefined;
+      return raw ? normalizeScan(raw, defaults) : null;
+    },
     putScan: async (s) => void (await db.put("kv", s, "scan")),
     getWizard: async () => ((await db.get("kv", "wizard")) as number[] | undefined) ?? [],
     putWizard: async (done) => void (await db.put("kv", done, "wizard")),

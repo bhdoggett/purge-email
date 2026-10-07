@@ -89,8 +89,8 @@ describe("ScanEngine", () => {
 
   it("builds a new candidate list when the age setting changed since an unfinished scan", async () => {
     const { engine, store } = await setup();
-    await store.putScan({ years: 5, candidateIds: ["stale"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });
-    await engine.start({ ...DEFAULT_SETTINGS, years: 10 });
+    await store.putScan({ ageMonths: 60, candidateIds: ["stale"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });
+    await engine.start({ ...DEFAULT_SETTINGS, ageMonths: 120 });
     expect((await store.getScan())?.candidateIds).toEqual(["promo", "mom", "att"]);
   });
 
@@ -141,20 +141,44 @@ describe("ScanEngine", () => {
 
   it("always builds a fresh candidate list when a limit is given", async () => {
     const { engine, store } = await setup();
-    await store.putScan({ years: DEFAULT_SETTINGS.years, candidateIds: ["promo", "mom", "att"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });
+    await store.putScan({ ageMonths: DEFAULT_SETTINGS.ageMonths, candidateIds: ["promo", "mom", "att"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });
     await engine.start(DEFAULT_SETTINGS, { limit: 1 });
     expect((await store.getScan())?.candidateIds).toHaveLength(1);
   });
 
-  it("scans mail of any age when years is 0", async () => {
+  it("scans mail of any age when ageMonths is 0", async () => {
     const { engine, store, gmail } = await setup([makeSummary("new"), makeSummary("old")]);
     gmail.ages.set("new", 0);
     const listIds = vi.spyOn(gmail, "listIds");
-    await engine.start({ ...DEFAULT_SETTINGS, years: 0 });
+    await engine.start({ ...DEFAULT_SETTINGS, ageMonths: 0 });
     expect(engine.getProgress().stage).toBe("done");
     expect((await store.getScan())?.candidateIds).toEqual(["new", "old"]);
     expect(listIds.mock.calls.map(([q]) => q).filter((q) => q.includes("older_than"))).toEqual([]);
     expect(listIds).toHaveBeenCalledWith("in:sent");
+  });
+
+  it("asks Gmail for candidates and sent mail in months", async () => {
+    const { engine, gmail } = await setup();
+    const listIds = vi.spyOn(gmail, "listIds");
+    await engine.start({ ...DEFAULT_SETTINGS, ageMonths: 6 });
+    const queries = listIds.mock.calls.map(([q]) => q);
+    expect(queries).toContain("in:sent older_than:6m");
+    expect(queries.some((q) => q.startsWith("older_than:6m "))).toBe(true);
+  });
+
+  it("lists only mail as old as the age, and keeps mail whose date is too new", async () => {
+    const now = new Date(2026, 9, 7, 12).getTime();
+    const recent = makeSummary("recent", { date: new Date(2026, 7, 1).toUTCString() });
+    const young = makeSummary("young", { date: new Date(2026, 9, 1).toUTCString() });
+    const { engine, gmail, store } = await setup([makeSummary("promo"), recent, young], { now: () => now });
+    gmail.ages.set("young", 0);
+    // Gmail lists "recent" as 3 months old, but its Date header says 2: decide() keeps it.
+    gmail.ages.set("recent", 3);
+    await engine.start({ ...DEFAULT_SETTINGS, ageMonths: 3 });
+    expect((await store.getScan())?.candidateIds).toEqual(["promo", "recent"]);
+    const p = engine.getProgress();
+    expect(p.recent.find((r) => r.id === "recent")).toMatchObject({ decision: "keep", reason: "too new", label: null });
+    expect(p.recent.find((r) => r.id === "promo")?.label).toBe("purge/promotion");
   });
 
   it("classifies an SDK connection error by the AppError it wraps", () => {
@@ -215,7 +239,7 @@ describe("ScanEngine", () => {
 
     it("builds a fresh candidate list when resuming with a different keepStarred", async () => {
       const { engine, store } = await setup([makeSummary("promo"), makeSummary("star", { labels: ["STARRED"] })]);
-      await store.putScan({ years: T.years, settings: T, candidateIds: ["stale"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });
+      await store.putScan({ ageMonths: T.ageMonths, settings: T, candidateIds: ["stale"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });
       await engine.start({ ...T, keepStarred: false });
       expect((await store.getScan())?.candidateIds).toEqual(["promo", "star"]);
       expect((await store.getScan())?.settings).toEqual({ ...T, keepStarred: false });
@@ -223,14 +247,14 @@ describe("ScanEngine", () => {
 
     it("resumes an unfinished scan whose settings need no rescan", async () => {
       const { engine, store } = await setup([makeSummary("promo")]);
-      await store.putScan({ years: T.years, settings: T, candidateIds: ["promo"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });
+      await store.putScan({ ageMonths: T.ageMonths, settings: T, candidateIds: ["promo"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });
       await engine.start({ ...T, labelPrefix: "other" });
       expect((await store.getScan())?.startedAt).toBe(0);
     });
 
     it("builds a fresh candidate list for an unfinished scan saved without settings", async () => {
       const { engine, store } = await setup([makeSummary("promo")]);
-      await store.putScan({ years: T.years, candidateIds: ["stale"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });
+      await store.putScan({ ageMonths: T.ageMonths, candidateIds: ["stale"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });
       await engine.start(T);
       expect((await store.getScan())?.candidateIds).toEqual(["promo"]);
     });

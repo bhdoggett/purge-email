@@ -6,6 +6,7 @@ import { APIError } from "@typesafe-ai/sdk";
 import { AppError, errorAndCause, SignInExpiredError } from "../bridge/errors.ts";
 import { GmailError, type Gmail, type Summary } from "../gmail/client.ts";
 import type { Judge } from "../jev/client.ts";
+import { flagsOf } from "./effective.ts";
 import type { ScanRecord, Store } from "../storage/db.ts";
 import { FEED_SIZE, INITIAL_PROGRESS, JEV_USD_PER_TOKEN, Pace, type Progress } from "./progress.ts";
 
@@ -83,9 +84,9 @@ export class ScanEngine {
     if (!limit && existing && !existing.finished && existing.settings && !needsRescan(existing.settings, settings)) return existing;
     const { gmail } = this.deps;
     const candidates = await gmail.listIds(candidateQuery(settings), limit);
-    const sent = await gmail.listIds(["in:sent", olderThan(settings.years)].filter(Boolean).join(" "));
+    const sent = await gmail.listIds(["in:sent", olderThan(settings.ageMonths)].filter(Boolean).join(" "));
     const scan: ScanRecord = {
-      years: settings.years,
+      ageMonths: settings.ageMonths,
       settings,
       candidateIds: candidates.map((c) => c.id),
       repliedThreadIds: [...new Set(sent.map((s) => s.threadId))],
@@ -158,11 +159,7 @@ export class ScanEngine {
               return;
             }
 
-            const { decision, reason } = decide(
-              { starred: summary.labels.includes("STARRED"), attachmentCount: summary.attachmentNames.length },
-              answers,
-              settings,
-            );
+            const { decision, reason } = decide(flagsOf(summary), answers, settings, this.now());
             const label = labelFor(decision, answers, settings);
             if (networked) pace.mark(this.now());
             const done = this.progress.done + 1;

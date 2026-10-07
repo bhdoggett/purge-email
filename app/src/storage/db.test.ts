@@ -16,14 +16,14 @@ describe("store", () => {
     await store.putSummary(summary);
     await store.putAnswers("m1", answers);
     await store.putLabels([{ id: "m1", label: "purge/promotion", labeledAt: 5, userRemoved: false, userChosen: false }]);
-    await store.putSettings({ ...DEFAULT_SETTINGS, years: 8 });
-    await store.putScan({ years: 8, candidateIds: ["m1"], repliedThreadIds: [], finished: false, startedAt: 1, settingsAtScan: null, msPerEmail: null });
+    await store.putSettings({ ...DEFAULT_SETTINGS, ageMonths: 8 });
+    await store.putScan({ ageMonths: 8, candidateIds: ["m1"], repliedThreadIds: [], finished: false, startedAt: 1, settingsAtScan: null, msPerEmail: null });
     await store.putWizard([1, 2]);
 
     expect(await store.getSummary("m1")).toEqual(summary);
     expect((await store.allAnswers()).get("m1")).toEqual(answers);
     expect((await store.allLabels()).get("m1")?.label).toBe("purge/promotion");
-    expect((await store.getSettings()).years).toBe(8);
+    expect((await store.getSettings()).ageMonths).toBe(8);
     expect((await store.getScan())?.candidateIds).toEqual(["m1"]);
     expect(await store.getWizard()).toEqual([1, 2]);
 
@@ -36,14 +36,14 @@ describe("store", () => {
     await store.putSummary(summary);
     await store.putAnswers("m1", answers);
     await store.putLabels([{ id: "m1", label: "purge/promotion", labeledAt: 5, userRemoved: true, userChosen: false }]);
-    await store.putSettings({ ...DEFAULT_SETTINGS, years: 7 });
+    await store.putSettings({ ...DEFAULT_SETTINGS, ageMonths: 7 });
     await store.putWizard([1]);
     await store.clearScanData();
     expect(await store.getSummary("m1")).toBeUndefined();
     expect((await store.allAnswers()).size).toBe(0);
     expect(await store.getScan()).toBeNull();
     expect((await store.allLabels()).get("m1")?.userRemoved).toBe(true);
-    expect((await store.getSettings()).years).toBe(7);
+    expect((await store.getSettings()).ageMonths).toBe(7);
     expect(await store.getWizard()).toEqual([1]);
   });
 
@@ -55,6 +55,31 @@ describe("store", () => {
     expect(s.labelPrefix).toBe(DEFAULT_SETTINGS.labelPrefix);
     expect(s.keepAttachments).toBe(DEFAULT_SETTINGS.keepAttachments);
     expect(s.keepStarred).toBe(DEFAULT_SETTINGS.keepStarred);
+    expect(s.ageMonths).toBe(120);
+    expect("years" in s).toBe(false);
+  });
+
+  it("converts years in stored settings and scans to months", async () => {
+    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const { ageMonths: _, ...rest } = DEFAULT_SETTINGS;
+    const old = { ...rest, years: 3 };
+    await store.putSettings(old as never);
+    await store.putScan({ years: 5, settings: { ...old, years: 5 }, candidateIds: ["m1"], repliedThreadIds: [], finished: true, startedAt: 1, settingsAtScan: { ...old, years: 5 }, msPerEmail: null } as never);
+    expect((await store.getSettings()).ageMonths).toBe(36);
+    const scan = (await store.getScan())!;
+    expect(scan.ageMonths).toBe(60);
+    expect("years" in scan).toBe(false);
+    expect(scan.settings).toEqual({ ...DEFAULT_SETTINGS, ageMonths: 60 });
+    expect(scan.settingsAtScan).toEqual({ ...DEFAULT_SETTINGS, ageMonths: 60 });
+  });
+
+  it("leaves a missing scan settings snapshot missing", async () => {
+    const store = await openStore(`t-${crypto.randomUUID()}`);
+    await store.putScan({ years: 2, candidateIds: [], repliedThreadIds: [], finished: false, startedAt: 1, settingsAtScan: null, msPerEmail: null } as never);
+    const scan = (await store.getScan())!;
+    expect(scan.settings).toBeUndefined();
+    expect(scan.settingsAtScan).toBeNull();
+    expect(scan.ageMonths).toBe(24);
   });
 
   it("uses the supplied defaults when nothing is stored", async () => {

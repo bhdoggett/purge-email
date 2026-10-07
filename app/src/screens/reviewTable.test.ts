@@ -16,7 +16,10 @@ const answers = new Map([
   ["u", fakeAnswers({ promotion: 0.6, none: 0.4 })],
 ]);
 const ids = ["p", "m", "s", "u"];
-const rows = (overrides = new Map()) => buildTableRows(ids, summaries, answers, overrides, DEFAULT_SETTINGS);
+const NOW = new Date(2026, 9, 7, 12).getTime();
+/** Any age, so the row with a bad date is judged rather than kept as too new. */
+const ANY_AGE = { ...DEFAULT_SETTINGS, ageMonths: 0 };
+const rows = (overrides = new Map()) => buildTableRows(ids, summaries, answers, overrides, ANY_AGE, NOW);
 
 describe("buildTableRows", () => {
   it("sorts newest first with bad dates last", () => {
@@ -35,9 +38,21 @@ describe("buildTableRows", () => {
   });
   it("says a kind is unchecked when that is why an email was kept", () => {
     const settings = { ...DEFAULT_SETTINGS, purgeKinds: DEFAULT_SETTINGS.purgeKinds.filter((k) => k !== "promotion") };
-    const r = buildTableRows(["p"], summaries, answers, new Map(), settings)[0]!;
+    const r = buildTableRows(["p"], summaries, answers, new Map(), settings, NOW)[0]!;
     expect(r.label).toBeNull();
     expect(r.reason).toBe("Kept: kind not checked");
+  });
+  it("says when an email was kept for being newer than the age", () => {
+    const recent = new Map([["n", makeSummary("n", { date: new Date(2026, 7, 1).toUTCString() })]]);
+    const promo = new Map([["n", fakeAnswers({ promotion: 0.95 })]]);
+    const r = buildTableRows(["n"], recent, promo, new Map(), { ...DEFAULT_SETTINGS, ageMonths: 6 }, NOW)[0]!;
+    expect(r).toMatchObject({ label: null, decision: "keep", reason: "Kept: newer than 6 months" });
+    const ten = buildTableRows(["n"], recent, promo, new Map(), DEFAULT_SETTINGS, NOW)[0]!;
+    expect(ten.reason).toBe("Kept: newer than 10 years");
+  });
+  it("keeps an email with a bad date when an age is set", () => {
+    const r = buildTableRows(["u"], summaries, answers, new Map(), DEFAULT_SETTINGS, NOW)[0]!;
+    expect(r).toMatchObject({ label: null, decision: "keep" });
   });
   it("marks overridden rows", () => {
     const r = rows(new Map([["m", { id: "m", slug: "social", at: 1 }]])).find((x) => x.id === "m")!;
@@ -48,21 +63,50 @@ describe("buildTableRows", () => {
 describe("filterRows", () => {
   const all = rows(new Map([["m", { id: "m", slug: null, at: 1 }]]));
   it("filters by decision bucket", () => {
-    expect(filterRows(all, { ...NO_FILTERS, decision: "purge" }).map((r) => r.id)).toEqual(["p"]);
-    expect(filterRows(all, { ...NO_FILTERS, decision: "maybe" }).map((r) => r.id)).toEqual(["u"]);
-    expect(filterRows(all, { ...NO_FILTERS, decision: "keep" }).map((r) => r.id)).toEqual(["s", "m"]);
-    expect(filterRows(all, { ...NO_FILTERS, decision: "changed" }).map((r) => r.id)).toEqual(["m"]);
+    expect(filterRows(all, { ...NO_FILTERS, decision: "purge" }, NOW).map((r) => r.id)).toEqual(["p"]);
+    expect(filterRows(all, { ...NO_FILTERS, decision: "maybe" }, NOW).map((r) => r.id)).toEqual(["u"]);
+    expect(filterRows(all, { ...NO_FILTERS, decision: "keep" }, NOW).map((r) => r.id)).toEqual(["s", "m"]);
+    expect(filterRows(all, { ...NO_FILTERS, decision: "changed" }, NOW).map((r) => r.id)).toEqual(["m"]);
   });
   it("matches category on the label, or the suggestion for kept rows", () => {
-    expect(filterRows(all, { ...NO_FILTERS, slug: "security-alert" }).map((r) => r.id)).toEqual(["s"]);
-    expect(filterRows(all, { ...NO_FILTERS, slug: "promotion" }).map((r) => r.id)).toEqual(["p"]);
+    expect(filterRows(all, { ...NO_FILTERS, slug: "security-alert" }, NOW).map((r) => r.id)).toEqual(["s"]);
+    expect(filterRows(all, { ...NO_FILTERS, slug: "promotion" }, NOW).map((r) => r.id)).toEqual(["p"]);
   });
   it("matches text in sender or subject, ignoring case", () => {
-    expect(filterRows(all, { ...NO_FILTERS, text: " groupon " }).map((r) => r.id)).toEqual(["p"]);
-    expect(filterRows(all, { ...NO_FILTERS, text: "DINNER" }).map((r) => r.id)).toEqual(["m"]);
+    expect(filterRows(all, { ...NO_FILTERS, text: " groupon " }, NOW).map((r) => r.id)).toEqual(["p"]);
+    expect(filterRows(all, { ...NO_FILTERS, text: "DINNER" }, NOW).map((r) => r.id)).toEqual(["m"]);
   });
   it("combines filters", () => {
-    expect(filterRows(all, { decision: "keep", slug: "security-alert", text: "bank" }).map((r) => r.id)).toEqual(["s"]);
+    expect(filterRows(all, { ...NO_FILTERS, decision: "keep", slug: "security-alert", text: "bank" }, NOW).map((r) => r.id)).toEqual(["s"]);
+  });
+});
+
+describe("filterRows: age", () => {
+  const dated = new Map([
+    ["old", makeSummary("old", { date: new Date(2016, 0, 1).toUTCString() })],
+    ["mid", makeSummary("mid", { date: new Date(2026, 0, 1).toUTCString() })],
+    ["new", makeSummary("new", { date: new Date(2026, 9, 1).toUTCString() })],
+    ["bad", makeSummary("bad", { date: "bad date" })],
+  ]);
+  const promo = new Map([...dated.keys()].map((id) => [id, fakeAnswers({ promotion: 0.95 })]));
+  const all = buildTableRows([...dated.keys()], dated, promo, new Map(), ANY_AGE, NOW);
+
+  it("is off at 0 and keeps rows with bad dates", () => {
+    expect(NO_FILTERS.olderThanMonths).toBe(0);
+    expect(filterRows(all, NO_FILTERS, NOW).map((r) => r.id)).toEqual(["new", "mid", "old", "bad"]);
+  });
+  it("shows only rows at least that old, leaving out bad dates", () => {
+    expect(filterRows(all, { ...NO_FILTERS, olderThanMonths: 6 }, NOW).map((r) => r.id)).toEqual(["mid", "old"]);
+    expect(filterRows(all, { ...NO_FILTERS, olderThanMonths: 24 }, NOW).map((r) => r.id)).toEqual(["old"]);
+  });
+  it("includes a row dated exactly at the cutoff", () => {
+    const edge = new Map([["e", makeSummary("e", { date: new Date(2026, 3, 7, 12).toUTCString() })]]);
+    const r = buildTableRows(["e"], edge, new Map(), new Map(), ANY_AGE, NOW);
+    expect(filterRows(r, { ...NO_FILTERS, olderThanMonths: 6 }, NOW).map((x) => x.id)).toEqual(["e"]);
+  });
+  it("combines with other filters", () => {
+    expect(filterRows(all, { ...NO_FILTERS, olderThanMonths: 6, text: "sender old" }, NOW).map((r) => r.id)).toEqual(["old"]);
+    expect(filterRows(all, { ...NO_FILTERS, olderThanMonths: 6, decision: "keep" }, NOW)).toEqual([]);
   });
 });
 

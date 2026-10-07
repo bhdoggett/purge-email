@@ -43,7 +43,7 @@ export function asLabelNameError(err: unknown): unknown {
   return err;
 }
 
-export async function summarize(store: Store, settings: Settings): Promise<{ purge: number; keep: number; review: number }> {
+export async function summarize(store: Store, settings: Settings, now: number = Date.now()): Promise<{ purge: number; keep: number; review: number }> {
   const scan = await store.getScan();
   const summaries = await store.allSummaries();
   const answers = await store.allAnswers();
@@ -52,7 +52,7 @@ export async function summarize(store: Store, settings: Settings): Promise<{ pur
   for (const id of scan?.candidateIds ?? []) {
     const s = summaries.get(id);
     if (!s) continue;
-    const e = effectiveLabel(s, answers.get(id) ?? null, overrides.get(id), settings);
+    const e = effectiveLabel(s, answers.get(id) ?? null, overrides.get(id), settings, now);
     counts[e.source === "override" ? (e.label === null ? "keep" : e.label.endsWith("/maybe") ? "review" : "purge") : e.decision]++;
   }
   return counts;
@@ -112,7 +112,7 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
   for (const id of i.candidates) {
     const s = i.summaries.get(id);
     const answers = i.answers.get(id) ?? null;
-    desired.set(id, s ? effectiveLabel(s, answers, overrides.get(id), i.settings).label : null);
+    desired.set(id, s ? effectiveLabel(s, answers, overrides.get(id), i.settings, i.now).label : null);
   }
 
   // 4. Apply to live, candidate and just-labeled ids the user hasn't taken over.

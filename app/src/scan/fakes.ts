@@ -23,7 +23,7 @@ export interface FakeGmail extends Gmail {
   getSummaryCalls: number;
   failIds: Set<string>;
   expireAfter: number | null;
-  /** Age in years per message, used for `older_than:` queries. Defaults to 20. */
+  /** Age in months per message, used for `older_than:` queries. Defaults to 240. */
   ages: Map<string, number>;
 }
 
@@ -51,8 +51,8 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
         ids = withLabels(opts.labelIds, opts.includeSpamTrash ?? false);
       } else if (q.startsWith("in:sent")) ids = [];
       else {
-        const years = Number(/older_than:(\d+)y/.exec(q)?.[1] ?? 0);
-        ids = messages.filter((m) => (fake.ages.get(m.id) ?? 20) >= years).map((m) => ({ id: m.id, threadId: m.threadId }));
+        const months = Number(/older_than:(\d+)m/.exec(q)?.[1] ?? 0);
+        ids = messages.filter((m) => (fake.ages.get(m.id) ?? 240) >= months).map((m) => ({ id: m.id, threadId: m.threadId }));
       }
       return ids.slice(0, limit);
     },

@@ -4,7 +4,7 @@ import type { ScanRecord } from "./storage/db.ts";
 import { stageAvailability } from "./stages.ts";
 
 const scan = (over: Partial<ScanRecord> = {}): ScanRecord => ({
-  years: 10,
+  ageMonths: 120,
   candidateIds: [],
   repliedThreadIds: [],
   finished: false,

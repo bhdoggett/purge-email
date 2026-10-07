@@ -1,5 +1,5 @@
-import type { Decision, Settings } from "@core/decide.ts";
-import { kindOfSlug, MAYBE, slugOfLabel, suggestedSlug } from "@core/labels.ts";
+import { cutoff, type Decision, type Settings } from "@core/decide.ts";
+import { ageText, kindOfSlug, MAYBE, slugOfLabel, suggestedSlug } from "@core/labels.ts";
 import { type Answers, PROTECTS, PURGE_KINDS, type ProtectId, type PurgeKind } from "@core/questions.ts";
 import type { Summary } from "../gmail/client.ts";
 import type { Override } from "../storage/db.ts";
@@ -32,6 +32,7 @@ function kindText(kind: PurgeKind, answers: Answers): string {
 function keptReason(raw: string, suggested: string | null, answers: Answers | null, settings: Settings): string {
   if (raw === "starred") return "Kept: starred";
   if (raw === "attachment") return "Kept: has attachments";
+  if (raw === "too new") return `Kept: newer than ${ageText(settings.ageMonths)}`;
   if (raw === "not judged" || !answers) return "Not judged";
   const protect = PROTECTS.find((p) => p.id === (raw.split(" ")[0] as ProtectId));
   if (protect) return `Kept: ${protect.label.toLowerCase()} ${pct(answers.protect[protect.id])}%`;
@@ -54,14 +55,14 @@ function labelReason(slug: string | null, answers: Answers | null, settings: Set
   return top === null ? "Unsure" : `Unsure: ${kindText(top, answers)}`;
 }
 
-export function buildTableRows(ids: string[], summaries: Map<string, Summary>, answers: Map<string, Answers>, overrides: Map<string, Override>, settings: Settings): TableRow[] {
+export function buildTableRows(ids: string[], summaries: Map<string, Summary>, answers: Map<string, Answers>, overrides: Map<string, Override>, settings: Settings, now: number): TableRow[] {
   const rows: TableRow[] = [];
   for (const id of ids) {
     const summary = summaries.get(id);
     if (!summary) continue;
     const a = answers.get(id) ?? null;
     const override = overrides.get(id);
-    const eff = effectiveLabel(summary, a, override, settings);
+    const eff = effectiveLabel(summary, a, override, settings, now);
     const slug = eff.label === null ? null : slugOfLabel(eff.label, settings.labelPrefix);
     const suggested = suggestedSlug(a);
     const reason = override ? "Changed by you" : eff.label === null ? keptReason(eff.reason, suggested, a, settings) : labelReason(slug, a, settings);
@@ -81,8 +82,10 @@ export interface Filters {
   decision: DecisionFilter;
   slug: string | "all";
   text: string;
+  /** Show only emails at least this many months old; 0 is off. */
+  olderThanMonths: number;
 }
-export const NO_FILTERS: Filters = { decision: "all", slug: "all", text: "" };
+export const NO_FILTERS: Filters = { decision: "all", slug: "all", text: "", olderThanMonths: 0 };
 
 function inBucket(r: TableRow, d: DecisionFilter): boolean {
   switch (d) {
@@ -99,10 +102,13 @@ function inBucket(r: TableRow, d: DecisionFilter): boolean {
   }
 }
 
-export function filterRows(rows: TableRow[], f: Filters): TableRow[] {
+export function filterRows(rows: TableRow[], f: Filters, now: number): TableRow[] {
   const text = f.text.trim().toLowerCase();
+  const before = f.olderThanMonths > 0 ? cutoff(now, f.olderThanMonths) : null;
   return rows.filter((r) => {
     if (!inBucket(r, f.decision)) return false;
+    // NaN dates fail this comparison, so an email with no readable date is left out while the filter is on.
+    if (before !== null && !(r.date <= before)) return false;
     if (f.slug !== "all" && (r.label === null ? r.suggested : r.slug) !== f.slug) return false;
     return text === "" || r.from.toLowerCase().includes(text) || r.subject.toLowerCase().includes(text);
   });

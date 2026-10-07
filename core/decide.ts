@@ -13,7 +13,8 @@ export const REVIEW_AT = 0.5;
 export interface Settings {
   purgeKinds: PurgeKind[];
   protects: ProtectId[];
-  years: number;
+  /** Only mail at least this many months old is labeled; 0 means any age. */
+  ageMonths: number;
   strictness: Strictness;
   labelPrefix: string;
   keepAttachments: boolean;
@@ -23,27 +24,52 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   purgeKinds: PURGE_KINDS.map((k) => k.id),
   protects: PROTECTS.map((p) => p.id),
-  years: 10,
+  ageMonths: 120,
   strictness: "balanced",
   labelPrefix: "purge",
   keepAttachments: true,
   keepStarred: true,
 };
 
+/**
+ * Settings as stored by any version of the app. Older versions saved `years` instead of `ageMonths`;
+ * missing fields come from `defaults`.
+ */
+export function normalizeSettings(raw: Partial<Settings> & { years?: number }, defaults: Settings): Settings {
+  const { years, ...rest } = raw;
+  const settings: Settings = { ...defaults, ...rest };
+  if (rest.ageMonths === undefined && typeof years === "number") settings.ageMonths = years * 12;
+  return settings;
+}
+
+/** The moment `months` calendar months before `now` (local time). Mail received after it is too new. */
+export function cutoff(now: number, months: number): number {
+  const d = new Date(now);
+  d.setMonth(d.getMonth() - months);
+  return d.getTime();
+}
+
 export type Decision = "purge" | "keep" | "review";
 
 export interface MessageFlags {
   starred: boolean;
   attachmentCount: number;
+  /** ms since epoch from the Date header; null when it is missing or can't be read. */
+  receivedAt: number | null;
 }
 
 export function decide(
   flags: MessageFlags,
   answers: Answers | null,
   settings: Settings,
+  now: number,
 ): { decision: Decision; reason: string } {
   if (flags.starred && settings.keepStarred) return { decision: "keep", reason: "starred" };
   if (flags.attachmentCount > 0 && settings.keepAttachments) return { decision: "keep", reason: "attachment" };
+  // Mail with no readable date can't be shown to be old enough, so it is kept.
+  if (settings.ageMonths > 0 && (flags.receivedAt === null || flags.receivedAt > cutoff(now, settings.ageMonths))) {
+    return { decision: "keep", reason: "too new" };
+  }
   if (!answers || answers.version !== QUESTIONS_VERSION) return { decision: "review", reason: "not judged" };
 
   const { purgeAt, protectAt } = STRICTNESS[settings.strictness];

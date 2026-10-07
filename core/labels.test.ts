@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "./decide.ts";
-import { ALL_SLUGS, appLabelNames, candidateQuery, kindOfSlug, olderThan, labelFor, needsRescan, slugOfLabel, suggestedSlug, validatePrefix } from "./labels.ts";
+import { ageText, ALL_SLUGS, appLabelNames, candidateQuery, kindOfSlug, olderThan, labelFor, needsRescan, slugOfLabel, suggestedSlug, validatePrefix } from "./labels.ts";
 import { type Answers, QUESTIONS_VERSION } from "./questions.ts";
 
 function answers(kind: Partial<Answers["kind"]>): Answers {
@@ -50,23 +50,48 @@ describe("validatePrefix", () => {
 
 describe("candidateQuery", () => {
   it("includes protections only when on", () => {
-    expect(candidateQuery(DEFAULT_SETTINGS)).toBe("older_than:10y -has:attachment -is:starred -in:spam -in:trash -in:chats");
-    expect(candidateQuery({ ...DEFAULT_SETTINGS, keepAttachments: false, keepStarred: false, years: 5 })).toBe("older_than:5y -in:spam -in:trash -in:chats");
+    expect(candidateQuery(DEFAULT_SETTINGS)).toBe("older_than:120m -has:attachment -is:starred -in:spam -in:trash -in:chats");
+    expect(candidateQuery({ ...DEFAULT_SETTINGS, keepAttachments: false, keepStarred: false, ageMonths: 6 })).toBe("older_than:6m -in:spam -in:trash -in:chats");
   });
 
-  it("leaves out the age term for 0 years, so mail of any age is a candidate", () => {
-    expect(candidateQuery({ ...DEFAULT_SETTINGS, years: 0 })).toBe("-has:attachment -is:starred -in:spam -in:trash -in:chats");
+  it("leaves out the age term for 0 months, so mail of any age is a candidate", () => {
+    expect(candidateQuery({ ...DEFAULT_SETTINGS, ageMonths: 0 })).toBe("-has:attachment -is:starred -in:spam -in:trash -in:chats");
+  });
+});
+
+describe("olderThan", () => {
+  it("uses Gmail's month unit", () => {
     expect(olderThan(0)).toBeNull();
-    expect(olderThan(3)).toBe("older_than:3y");
+    expect(olderThan(6)).toBe("older_than:6m");
+    expect(olderThan(120)).toBe("older_than:120m");
   });
 });
 
 describe("needsRescan", () => {
-  it("is true only for years and protections", () => {
-    expect(needsRescan(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, years: 12 })).toBe(true);
-    expect(needsRescan(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, keepStarred: false })).toBe(true);
-    expect(needsRescan(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, keepAttachments: false })).toBe(true);
-    expect(needsRescan(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, labelPrefix: "x", strictness: "careful", purgeKinds: [] })).toBe(false);
+  const at = (patch: Partial<Settings>) => ({ ...DEFAULT_SETTINGS, ...patch });
+  it("is false when the age is raised, since decide() keeps the newer mail", () => {
+    expect(needsRescan(at({ ageMonths: 120 }), at({ ageMonths: 144 }))).toBe(false);
+    expect(needsRescan(at({ ageMonths: 0 }), at({ ageMonths: 120 }))).toBe(false);
+  });
+  it("is true when the age is lowered or set to any age", () => {
+    expect(needsRescan(at({ ageMonths: 120 }), at({ ageMonths: 6 }))).toBe(true);
+    expect(needsRescan(at({ ageMonths: 120 }), at({ ageMonths: 0 }))).toBe(true);
+  });
+  it("is true when a protection is turned off", () => {
+    expect(needsRescan(DEFAULT_SETTINGS, at({ keepStarred: false }))).toBe(true);
+    expect(needsRescan(DEFAULT_SETTINGS, at({ keepAttachments: false }))).toBe(true);
+  });
+  it("is false when a protection is turned on", () => {
+    expect(needsRescan(at({ keepStarred: false, keepAttachments: false }), DEFAULT_SETTINGS)).toBe(false);
+  });
+  it("ignores rules that don't change the candidates", () => {
+    expect(needsRescan(DEFAULT_SETTINGS, at({ labelPrefix: "x", strictness: "careful", purgeKinds: [] }))).toBe(false);
+  });
+});
+
+describe("ageText", () => {
+  it.each([[1, "1 month"], [6, "6 months"], [12, "1 year"], [24, "2 years"], [18, "18 months"]])("%i", (months, text) => {
+    expect(ageText(months)).toBe(text);
   });
 });
 

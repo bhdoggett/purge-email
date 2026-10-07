@@ -56,14 +56,20 @@ export function validatePrefix(raw: string): string | null {
   return null;
 }
 
-/** Gmail age term for `years`, or null for 0 years (any age). */
-export function olderThan(years: number): string | null {
-  return years > 0 ? `older_than:${years}y` : null;
+/** Gmail age term for `months`, or null for 0 months (any age). */
+export function olderThan(months: number): string | null {
+  return months > 0 ? `older_than:${months}m` : null;
+}
+
+/** "1 month", "6 months", "2 years": whole years when the months divide by 12. */
+export function ageText(months: number): string {
+  const [n, unit] = months > 0 && months % 12 === 0 ? [months / 12, "year"] : [months, "month"];
+  return `${n} ${unit}${n === 1 ? "" : "s"}`;
 }
 
 export function candidateQuery(settings: Settings): string {
   return [
-    olderThan(settings.years),
+    olderThan(settings.ageMonths),
     settings.keepAttachments ? "-has:attachment" : null,
     settings.keepStarred ? "-is:starred" : null,
     "-in:spam -in:trash -in:chats",
@@ -72,6 +78,12 @@ export function candidateQuery(settings: Settings): string {
     .join(" ");
 }
 
+/**
+ * True when the rules `now` could include emails the scan under `atScan` never listed: a lower age
+ * (0 is any age, the widest), or a protection turned off. Narrower rules need no rescan: decide()
+ * keeps newer, starred and attachment mail from the wider candidate list.
+ */
 export function needsRescan(atScan: Settings, now: Settings): boolean {
-  return atScan.years !== now.years || atScan.keepAttachments !== now.keepAttachments || atScan.keepStarred !== now.keepStarred;
+  const ageWidened = atScan.ageMonths > 0 && (now.ageMonths === 0 || now.ageMonths < atScan.ageMonths);
+  return ageWidened || (atScan.keepAttachments && !now.keepAttachments) || (atScan.keepStarred && !now.keepStarred);
 }
