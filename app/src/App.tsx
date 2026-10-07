@@ -4,6 +4,7 @@ import { Button } from "./components/Button.tsx";
 import { Header } from "./components/Header.tsx";
 import { Settings } from "./screens/Settings.tsx";
 import { Welcome } from "./screens/Welcome.tsx";
+import { Wizard } from "./screens/Wizard.tsx";
 import { getServices, type Services } from "./services.ts";
 import { useProgress } from "./useProgress.ts";
 import styles from "./App.module.css";
@@ -71,7 +72,15 @@ function Shell({ services }: { services: Services }) {
       <main className={styles.main}>
         {screen === "welcome" && <Welcome onStart={() => go("wizard")} />}
         {screen === "settings" && <Settings services={services} email={status.gmailEmail} onChanged={refresh} onBack={back} />}
-        {screen === "wizard" && <p>wizard</p>}
+        {screen === "wizard" && (
+          <Wizard
+            services={services}
+            onDone={async () => {
+              await refresh();
+              go("rules");
+            }}
+          />
+        )}
         {screen === "rules" && <p>rules</p>}
         {screen === "scan" && <p>scan</p>}
         {screen === "review" && <p>review</p>}
