@@ -2,6 +2,7 @@ import { useState } from "react";
 import { clearSecrets, signOut } from "../bridge/tauri.ts";
 import { Button } from "../components/Button.tsx";
 import type { Services } from "../services.ts";
+import { forgetSteps, KEY_STEPS, SIGN_IN_STEPS } from "../wizard/steps.ts";
 import styles from "./Settings.module.css";
 
 export function Settings({ services, email, onChanged, onBack }: { services: Services; email: string | null; onChanged: () => Promise<unknown> | void; onBack: () => void }) {
@@ -32,14 +33,14 @@ export function Settings({ services, email, onChanged, onBack }: { services: Ser
           <h2 className={styles.subheading}>Gmail</h2>
           <p className={styles.muted}>{email ? `Signed in as ${email}` : "Not signed in"}</p>
         </div>
-        <Button variant="secondary" disabled={!email || busy} onClick={() => act(signOut, "Signed out of Gmail.")}>Sign out</Button>
+        <Button variant="secondary" disabled={!email || busy} onClick={() => act(async () => { await signOut(); await forgetSteps(services.store, SIGN_IN_STEPS); }, "Signed out of Gmail.")}>Sign out</Button>
       </div>
       <div className={styles.row}>
         <div>
           <h2 className={styles.subheading}>Saved keys</h2>
           <p className={styles.muted}>Removes the Jev key and Google client from the Keychain and signs you out.</p>
         </div>
-        <Button variant="danger" disabled={busy} onClick={() => act(clearSecrets, "Keys removed.")}>Remove keys</Button>
+        <Button variant="danger" disabled={busy} onClick={() => act(async () => { await clearSecrets(); await forgetSteps(services.store, KEY_STEPS); }, "Keys removed.")}>Remove keys</Button>
       </div>
       <div className={styles.row}>
         <div>

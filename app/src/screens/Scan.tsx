@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Screen } from "../App.tsx";
+import type { Screen, WizardTarget } from "../App.tsx";
 import { Button } from "../components/Button.tsx";
 import { Feed } from "../components/Feed.tsx";
 import { ProgressBar } from "../components/ProgressBar.tsx";
@@ -29,7 +29,7 @@ const STAGE_COPY: Record<string, string> = {
   error: "Stopped by an error",
 };
 
-export function Scan({ services, go }: { services: Services; go: (s: Screen) => void }) {
+export function Scan({ services, go, openWizard }: { services: Services; go: (s: Screen) => void; openWizard: (t: WizardTarget) => void }) {
   const p = useProgress(services.engine);
   const now = useNow(p.rateLimitUntil !== null);
   const waiting = p.rateLimitUntil !== null && p.rateLimitUntil > now;
@@ -72,9 +72,21 @@ export function Scan({ services, go }: { services: Services; go: (s: Screen) => 
       <div className={styles.actions}>
         {running && <Button variant="secondary" onClick={() => services.engine.pause()}>Pause</Button>}
         {!running && p.job === "scan" && p.stage === "paused" && <Button onClick={() => void resume()}>Resume</Button>}
-        {!running && p.stage === "signInExpired" && <Button onClick={() => go("wizard")}>Sign in again</Button>}
+        {!running && p.stage === "signInExpired" && (
+          <Button
+            onClick={() =>
+              openWizard({
+                startAt: 6,
+                message: p.job === "scan" ? "Your Google sign-in expired. Sign in again and the scan picks up where it stopped." : "Your Google sign-in expired. Sign in again to continue.",
+                resumeScan: p.job === "scan",
+              })
+            }
+          >
+            Sign in again
+          </Button>
+        )}
         {!running && p.stage === "done" && <Button onClick={() => go("review")}>Review results</Button>}
-        {!running && mapped && <Button variant="secondary" onClick={() => go("wizard")}>Fix setup</Button>}
+        {!running && mapped && <Button variant="secondary" onClick={() => openWizard({ startAt: mapped.step, message: mapped.message })}>Fix setup</Button>}
         {!running && <Button variant="secondary" onClick={() => go("rules")}>Back to rules</Button>}
       </div>
     </section>

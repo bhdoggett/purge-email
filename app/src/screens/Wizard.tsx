@@ -5,9 +5,8 @@ import { Button } from "../components/Button.tsx";
 import { createJudge } from "../jev/client.ts";
 import type { Services } from "../services.ts";
 import { errorToStep } from "../wizard/errorToStep.ts";
+import { initialStep, type Step } from "../wizard/steps.ts";
 import styles from "./Wizard.module.css";
-
-type Step = 1 | 2 | 3 | 4 | 5 | 6;
 const STEPS: { n: Step; title: string }[] = [
   { n: 1, title: "Add your Jev key" },
   { n: 2, title: "Create a Google Cloud project" },
@@ -19,10 +18,19 @@ const STEPS: { n: Step; title: string }[] = [
 
 const TEST_EMAIL = { from: "Example Store <deals@example.com>", to: "me", cc: "", subject: "Weekend sale", date: "2014", snippet: "50% off everything", ownerReplied: false, hasListUnsubscribe: true, labels: [] };
 
-export function Wizard({ services, onDone }: { services: Services; onDone: () => void | Promise<void> }) {
+export interface WizardProps {
+  services: Services;
+  onDone: () => void | Promise<void>;
+  /** Step to open on. Without it the wizard opens on the first unfinished step. */
+  startAt?: Step;
+  /** Explains why the wizard was opened, such as an expired sign-in. */
+  message?: string;
+}
+
+export function Wizard({ services, onDone, startAt, message }: WizardProps) {
   const [done, setDone] = useState<Step[]>([]);
-  const [current, setCurrent] = useState<Step>(1);
-  const [error, setError] = useState<string | null>(null);
+  const [current, setCurrent] = useState<Step>(startAt ?? 1);
+  const [error, setError] = useState<string | null>(message ?? null);
   const [working, setWorking] = useState(false);
   const [jevKey, setJevKey] = useState("");
   const [clientId, setClientId] = useState("");
@@ -31,12 +39,10 @@ export function Wizard({ services, onDone }: { services: Services; onDone: () =>
 
   useEffect(() => {
     void services.store.getWizard().then((saved) => {
-      const steps = saved as Step[];
-      setDone(steps);
-      const next = STEPS.find((s) => !steps.includes(s.n));
-      if (next) setCurrent(next.n);
+      setDone(saved as Step[]);
+      setCurrent(initialStep(saved, startAt));
     });
-  }, [services.store]);
+  }, [services.store, startAt]);
 
   async function complete(step: Step) {
     const next = [...new Set([...done, step])].sort() as Step[];

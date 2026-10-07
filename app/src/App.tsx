@@ -10,9 +10,18 @@ import { Welcome } from "./screens/Welcome.tsx";
 import { Wizard } from "./screens/Wizard.tsx";
 import { getServices, type Services } from "./services.ts";
 import { useProgress } from "./useProgress.ts";
+import type { Step } from "./wizard/steps.ts";
 import styles from "./App.module.css";
 
 export type Screen = "welcome" | "wizard" | "rules" | "scan" | "review" | "settings";
+
+/** Where to open the wizard and what to do once sign-in succeeds. */
+export interface WizardTarget {
+  startAt?: Step;
+  message?: string;
+  /** Return to the scan and resume it after a successful sign-in. */
+  resumeScan?: boolean;
+}
 
 function hasCredentials(s: SecretsStatus): boolean {
   return Boolean(s.jev && s.googleClient && s.gmailEmail);
@@ -37,6 +46,7 @@ function Shell({ services }: { services: Services }) {
   const [status, setStatus] = useState<SecretsStatus | null>(null);
   const [screen, setScreen] = useState<Screen | null>(null);
   const [previous, setPrevious] = useState<Screen>("rules");
+  const [wizardTarget, setWizardTarget] = useState<WizardTarget>({});
   const [error, setError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
@@ -63,7 +73,24 @@ function Shell({ services }: { services: Services }) {
 
   const go = (next: Screen) => {
     if (next === "settings" && screen && screen !== "settings") setPrevious(screen);
+    if (next === "wizard") setWizardTarget({});
     setScreen(next);
+  };
+
+  const openWizard = (target: WizardTarget) => {
+    setWizardTarget(target);
+    setScreen("wizard");
+  };
+
+  const wizardDone = async () => {
+    await refresh();
+    if (wizardTarget.resumeScan) {
+      const settings = await services.store.getSettings();
+      void services.engine.start(settings);
+      go("scan");
+    } else {
+      go("rules");
+    }
   };
 
   const back = () => go(status && !hasCredentials(status) ? "wizard" : previous);
@@ -78,16 +105,10 @@ function Shell({ services }: { services: Services }) {
         {screen === "welcome" && <Welcome onStart={() => go("wizard")} />}
         {screen === "settings" && <Settings services={services} email={status.gmailEmail} onChanged={refresh} onBack={back} />}
         {screen === "wizard" && (
-          <Wizard
-            services={services}
-            onDone={async () => {
-              await refresh();
-              go("rules");
-            }}
-          />
+          <Wizard services={services} startAt={wizardTarget.startAt} message={wizardTarget.message} onDone={wizardDone} />
         )}
         {screen === "rules" && <Rules services={services} go={go} />}
-        {screen === "scan" && <Scan services={services} go={go} />}
+        {screen === "scan" && <Scan services={services} go={go} openWizard={openWizard} />}
         {screen === "review" && <Review services={services} go={go} />}
       </main>
     </div>

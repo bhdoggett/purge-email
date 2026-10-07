@@ -1,8 +1,8 @@
 import { APIError } from "@typesafe-ai/sdk";
 import { AppError, errorAndCause } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
+import type { Step } from "./steps.ts";
 
-type Step = 1 | 2 | 3 | 4 | 5 | 6;
 type Mapped = { step: Step; message: string };
 const result = (step: Step, message: string): Mapped => ({ step, message });
 
