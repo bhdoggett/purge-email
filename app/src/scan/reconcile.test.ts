@@ -36,6 +36,7 @@ function input(answers: Record<string, Answers>, rest: Partial<ReconcileInput> =
     anywhere: new Map(),
     live: new Set(),
     overrides: new Map(),
+    close: new Set(),
     ...rest,
   };
 }
@@ -851,3 +852,40 @@ describe("progress reporting", () => {
     expect(calls.at(-1)).toEqual([2, 2]);
   });
 });
+
+describe("trivial personal mail and close people", () => {
+  const on: Settings = { ...DEFAULT_SETTINGS, trivialPersonal: true };
+  const trivial = { ...fakeAnswers({ none: 1 }, { personal: 0.9 }), significance: 0.1 };
+  const summaries = new Map([["a", makeSummary("a", { from: "Ann <ann@x.com>" })]]);
+
+  it("labels a trivial personal email from someone not close purge/personal", () => {
+    const plan = planReconcile(input({ a: trivial }, { settings: on, summaries }));
+    expect(plan.add).toEqual(new Map([["purge/personal", ["a"]]]));
+  });
+
+  it("removes that label on the next plan once the sender is close, with no rescan", () => {
+    const plan = planReconcile(input({ a: trivial }, { settings: on, summaries, records: new Map([["a", rec("a", "purge/personal")]]), ...labeled({ a: "purge/personal" }), close: new Set(["ann@x.com"]) }));
+    expect(plan.remove).toEqual(new Map([["purge/personal", ["a"]]]));
+    expect(plan.add.size).toBe(0);
+    expect(plan.del).toEqual(["a"]);
+  });
+
+  it("reads the close set from the store in summarize and previewReconcile", async () => {
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
+    const gmail = createFakeGmail([summaries.get("a")!]);
+    await store.putSummary(summaries.get("a")!);
+    await store.putAnswers("a", trivial);
+    await store.putScan({ ageMonths: 120, settings: on, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 1, settingsAtScan: on, msPerEmail: null });
+    expect(await summarize(store, on, NOW)).toEqual({ purge: 1, keep: 0, review: 0 });
+    expect((await previewReconcile({ gmail, store, now: () => NOW }, on)).plan.add).toEqual(new Map([["purge/personal", ["a"]]]));
+
+    await store.putCloseChoices({ "ann@x.com": true });
+    expect(await summarize(store, on, NOW)).toEqual({ purge: 0, keep: 1, review: 0 });
+    expect((await previewReconcile({ gmail, store, now: () => NOW }, on)).plan.add.size).toBe(0);
+  });
+
+  it("reads the personal label back from Gmail", async () => {
+    expect(appLabelNames("purge")).toContain("purge/personal");
+  });
+});
+

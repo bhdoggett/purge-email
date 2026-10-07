@@ -3,6 +3,7 @@ import { labelFor } from "@core/labels.ts";
 import type { Answers } from "@core/questions.ts";
 import type { Summary } from "../gmail/client.ts";
 import type { Override } from "../storage/db.ts";
+import { senderAddress } from "./closeness.ts";
 
 export interface Effective {
   /** Full app label the email should carry, or null for none. */
@@ -13,15 +14,24 @@ export interface Effective {
   reason: string;
 }
 
-/** What decide() needs to know about an email. An unreadable Date header gives a null `receivedAt`. */
-export function flagsOf(summary: Summary): MessageFlags {
+/**
+ * What decide() needs to know about an email. An unreadable Date header gives a null `receivedAt`;
+ * the sender is close when the From address is in `close` (lowercase addresses).
+ */
+export function flagsOf(summary: Summary, close: ReadonlySet<string>): MessageFlags {
   const receivedAt = Date.parse(summary.date);
-  return { starred: summary.labels.includes("STARRED"), attachmentCount: summary.attachmentNames.length, receivedAt: Number.isNaN(receivedAt) ? null : receivedAt, senderClose: false };
+  const from = close.size > 0 ? senderAddress(summary.from) : null;
+  return {
+    starred: summary.labels.includes("STARRED"),
+    attachmentCount: summary.attachmentNames.length,
+    receivedAt: Number.isNaN(receivedAt) ? null : receivedAt,
+    senderClose: from !== null && close.has(from),
+  };
 }
 
 /** The one place that turns an email into its label, so Review, Apply and reconcile never disagree. */
-export function effectiveLabel(summary: Summary, answers: Answers | null, override: Override | undefined, settings: Settings, now: number): Effective {
-  const { decision, reason, slug } = decide(flagsOf(summary), answers, settings, now);
+export function effectiveLabel(summary: Summary, answers: Answers | null, override: Override | undefined, settings: Settings, now: number, close: ReadonlySet<string>): Effective {
+  const { decision, reason, slug } = decide(flagsOf(summary, close), answers, settings, now);
   if (override) {
     return { label: override.slug === null ? null : `${settings.labelPrefix}/${override.slug}`, source: "override", decision, reason };
   }

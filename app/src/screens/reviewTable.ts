@@ -1,5 +1,5 @@
 import { cutoff, type Decision, type Settings } from "@core/decide.ts";
-import { ageText, kindOfSlug, MAYBE, slugOfLabel, suggestedSlug } from "@core/labels.ts";
+import { ageText, kindOfSlug, MAYBE, PERSONAL_SLUG, slugOfLabel, suggestedSlug } from "@core/labels.ts";
 import { type Answers, PROTECTS, PURGE_KINDS, type ProtectId, type PurgeKind } from "@core/questions.ts";
 import type { Summary } from "../gmail/client.ts";
 import type { Override } from "../storage/db.ts";
@@ -37,6 +37,9 @@ function keptReason(raw: string, suggested: string | null, answers: Answers | nu
   if (raw === "too new") return `Kept: newer than ${ageText(settings.ageMonths)}`;
   if (raw === "no date") return "Kept: date unknown";
   if (raw === "not judged" || !answers) return "Not judged";
+  if (raw === "close person") return "Kept: close person";
+  if (raw === "personal unchecked") return "Kept: personal, not checked yet";
+  if (raw.startsWith("meaningful ") && answers.significance !== undefined) return `Kept: meaningful ${pct(answers.significance)}%`;
   const protect = PROTECTS.find((p) => p.id === (raw.split(" ")[0] as ProtectId));
   if (protect) return `Kept: ${protect.label.toLowerCase()} ${pct(answers.protect[protect.id])}%`;
   const kind = suggested === null ? null : kindOfSlug(suggested);
@@ -47,6 +50,7 @@ function keptReason(raw: string, suggested: string | null, answers: Answers | nu
 
 function labelReason(slug: string | null, answers: Answers | null, settings: Settings): string {
   if (!answers || slug === null) return "Not judged";
+  if (slug === PERSONAL_SLUG) return answers.significance === undefined ? "Trivial personal mail" : `personal, trivial ${pct(1 - answers.significance)}%`;
   const kind = kindOfSlug(slug);
   if (kind) return kindText(kind, answers);
   // "maybe" (or an unknown slug): describe the top checked kind.
@@ -58,14 +62,15 @@ function labelReason(slug: string | null, answers: Answers | null, settings: Set
   return top === null ? "Unsure" : `Unsure: ${kindText(top, answers)}`;
 }
 
-export function buildTableRows(ids: string[], summaries: Map<string, Summary>, answers: Map<string, Answers>, overrides: Map<string, Override>, settings: Settings, now: number): TableRow[] {
+/** `close` holds the user's close people (lowercase addresses). */
+export function buildTableRows(ids: string[], summaries: Map<string, Summary>, answers: Map<string, Answers>, overrides: Map<string, Override>, settings: Settings, now: number, close: ReadonlySet<string>): TableRow[] {
   const rows: TableRow[] = [];
   for (const id of ids) {
     const summary = summaries.get(id);
     if (!summary) continue;
     const a = answers.get(id) ?? null;
     const override = overrides.get(id);
-    const eff = effectiveLabel(summary, a, override, settings, now);
+    const eff = effectiveLabel(summary, a, override, settings, now, close);
     const slug = eff.label === null ? null : slugOfLabel(eff.label, settings.labelPrefix);
     const suggested = suggestedSlug(a);
     const reason = override ? "Changed by you" : eff.label === null ? keptReason(eff.reason, suggested, a, settings) : labelReason(slug, a, settings);

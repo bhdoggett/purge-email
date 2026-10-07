@@ -1,6 +1,7 @@
 import { APIConnectionError, APIError } from "@typesafe-ai/sdk";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "@core/decide.ts";
+import type { EmailFacts } from "@core/questions.ts";
 import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
 import { openStore } from "../storage/db.ts";
@@ -18,8 +19,9 @@ async function setup(messages = [makeSummary("promo"), makeSummary("mom"), makeS
     return fakeAnswers({ promotion: 0.97 });
   });
   const notify = vi.fn();
-  const engine = new ScanEngine({ gmail, judge, store, notify, ...extra });
-  return { store, gmail, judge, engine, notify };
+  const judgeSignificance = vi.fn(async (_facts: EmailFacts) => ({ meaningful: 0.1, inputTokens: 500 }));
+  const engine = new ScanEngine({ gmail, judge, judgeSignificance, store, notify, ...extra });
+  return { store, gmail, judge, judgeSignificance, engine, notify };
 }
 
 describe("ScanEngine", () => {
@@ -286,4 +288,70 @@ describe("ScanEngine", () => {
       expect((await store.getScan())?.candidateIds).toEqual(["promo"]);
     });
   });
+
+  describe("trivial personal mail", () => {
+    const on = { ...DEFAULT_SETTINGS, trivialPersonal: true };
+    const mail = () => [
+      makeSummary("mom", { from: "Mom <mom@x.com>", snippet: "see you at 5" }),
+      makeSummary("mom2", { from: "Old Friend <pal@x.com>", subject: "subject mom pal", snippet: "ok thanks" }),
+      makeSummary("promo"),
+      makeSummary("star", { from: "Mom <mom@x.com>", subject: "subject mom starred", labels: ["STARRED"] }),
+    ];
+
+    it("asks only personal emails from people who aren't close, labels the trivial ones, and adds the cost", async () => {
+      const { engine, store, judge, judgeSignificance } = await setup(mail());
+      await store.putCloseChoices({ "mom@x.com": true });
+      await engine.start(on);
+      // Starred mail is judged too (it can be labeled when starred mail isn't kept), but is never asked.
+      expect(judge).toHaveBeenCalledTimes(4);
+      expect(judgeSignificance).toHaveBeenCalledTimes(1);
+      expect(judgeSignificance.mock.calls[0]![0]).toMatchObject({ from: "Old Friend <pal@x.com>" });
+      expect((await store.getAnswers("mom2"))?.significance).toBe(0.1);
+      expect((await store.getAnswers("mom"))?.significance).toBeUndefined();
+      const p = engine.getProgress();
+      expect(p.recent.find((r) => r.id === "mom2")).toMatchObject({ decision: "purge", label: "purge/personal", reason: "personal trivial 0.90" });
+      expect(p.recent.find((r) => r.id === "mom")).toMatchObject({ decision: "keep", label: null, reason: "close person" });
+      expect(p.costUsd).toBeCloseTo(((4 * 1000 + 500) * 0.042) / 1_000_000);
+    });
+
+    it("never asks when the setting is off", async () => {
+      const { engine, judgeSignificance } = await setup(mail());
+      await engine.start(DEFAULT_SETTINGS);
+      expect(judgeSignificance).not.toHaveBeenCalled();
+    });
+
+    it("asks already-judged emails without asking the main questions again, and only once", async () => {
+      const { engine, store, judge, judgeSignificance } = await setup(mail());
+      await engine.start(DEFAULT_SETTINGS);
+      expect(judge).toHaveBeenCalledTimes(4);
+      await engine.start(on);
+      expect(judge).toHaveBeenCalledTimes(4);
+      expect(judgeSignificance).toHaveBeenCalledTimes(2);
+      expect((await store.getAnswers("mom"))?.significance).toBe(0.1);
+      await engine.start(on);
+      expect(judgeSignificance).toHaveBeenCalledTimes(2);
+    });
+
+    it("leaves the email kept and unchecked when the question fails", async () => {
+      const { engine, store, judgeSignificance } = await setup([mail()[1]!]);
+      judgeSignificance.mockRejectedValueOnce(new Error("busy"));
+      await engine.start(on);
+      expect((await store.getAnswers("mom2"))?.significance).toBeUndefined();
+      expect(engine.getProgress().counts.failed).toBe(1);
+      await engine.start(on);
+      expect((await store.getAnswers("mom2"))?.significance).toBe(0.1);
+    });
+
+    it("strips the preview when previews are off, even from a summary saved with one", async () => {
+      const { engine, judgeSignificance } = await setup([mail()[1]!]);
+      await engine.start(DEFAULT_SETTINGS);
+      await engine.start({ ...on, sendPreviews: false });
+      expect(judgeSignificance.mock.calls[0]![0]).toMatchObject({ snippet: "" });
+
+      const sends = await setup([mail()[1]!]);
+      await sends.engine.start(on);
+      expect(sends.judgeSignificance.mock.calls[0]![0]).toMatchObject({ snippet: "ok thanks" });
+    });
+  });
 });
+

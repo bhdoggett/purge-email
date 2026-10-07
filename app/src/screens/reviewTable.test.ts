@@ -19,7 +19,7 @@ const ids = ["p", "m", "s", "u"];
 const NOW = new Date(2026, 9, 7, 12).getTime();
 /** Any age, so the row with a bad date is judged rather than kept as too new. */
 const ANY_AGE = { ...DEFAULT_SETTINGS, ageMonths: 0 };
-const rows = (overrides = new Map()) => buildTableRows(ids, summaries, answers, overrides, ANY_AGE, NOW);
+const rows = (overrides = new Map()) => buildTableRows(ids, summaries, answers, overrides, ANY_AGE, NOW, new Set());
 
 describe("buildTableRows", () => {
   it("sorts newest first with bad dates last", () => {
@@ -38,20 +38,20 @@ describe("buildTableRows", () => {
   });
   it("says a kind is unchecked when that is why an email was kept", () => {
     const settings = { ...DEFAULT_SETTINGS, purgeKinds: DEFAULT_SETTINGS.purgeKinds.filter((k) => k !== "promotion") };
-    const r = buildTableRows(["p"], summaries, answers, new Map(), settings, NOW)[0]!;
+    const r = buildTableRows(["p"], summaries, answers, new Map(), settings, NOW, new Set())[0]!;
     expect(r.label).toBeNull();
     expect(r.reason).toBe("Kept: kind not checked");
   });
   it("says when an email was kept for being newer than the age", () => {
     const recent = new Map([["n", makeSummary("n", { date: new Date(2026, 7, 1).toUTCString() })]]);
     const promo = new Map([["n", fakeAnswers({ promotion: 0.95 })]]);
-    const r = buildTableRows(["n"], recent, promo, new Map(), { ...DEFAULT_SETTINGS, ageMonths: 6 }, NOW)[0]!;
+    const r = buildTableRows(["n"], recent, promo, new Map(), { ...DEFAULT_SETTINGS, ageMonths: 6 }, NOW, new Set())[0]!;
     expect(r).toMatchObject({ label: null, decision: "keep", reason: "Kept: newer than 6 months" });
-    const ten = buildTableRows(["n"], recent, promo, new Map(), DEFAULT_SETTINGS, NOW)[0]!;
+    const ten = buildTableRows(["n"], recent, promo, new Map(), DEFAULT_SETTINGS, NOW, new Set())[0]!;
     expect(ten.reason).toBe("Kept: newer than 10 years");
   });
   it("keeps an email with a bad date when an age is set", () => {
-    const r = buildTableRows(["u"], summaries, answers, new Map(), DEFAULT_SETTINGS, NOW)[0]!;
+    const r = buildTableRows(["u"], summaries, answers, new Map(), DEFAULT_SETTINGS, NOW, new Set())[0]!;
     expect(r).toMatchObject({ label: null, decision: "keep", reason: "Kept: date unknown" });
   });
   it("marks overridden rows", () => {
@@ -89,7 +89,7 @@ describe("filterRows: age", () => {
     ["bad", makeSummary("bad", { date: "bad date" })],
   ]);
   const promo = new Map([...dated.keys()].map((id) => [id, fakeAnswers({ promotion: 0.95 })]));
-  const all = buildTableRows([...dated.keys()], dated, promo, new Map(), ANY_AGE, NOW);
+  const all = buildTableRows([...dated.keys()], dated, promo, new Map(), ANY_AGE, NOW, new Set());
 
   it("is off at 0 and keeps rows with bad dates", () => {
     expect(NO_FILTERS.olderThanMonths).toBe(0);
@@ -101,7 +101,7 @@ describe("filterRows: age", () => {
   });
   it("includes a row dated exactly at the cutoff", () => {
     const edge = new Map([["e", makeSummary("e", { date: new Date(2026, 3, 7, 12).toUTCString() })]]);
-    const r = buildTableRows(["e"], edge, new Map(), new Map(), ANY_AGE, NOW);
+    const r = buildTableRows(["e"], edge, new Map(), new Map(), ANY_AGE, NOW, new Set());
     expect(filterRows(r, { ...NO_FILTERS, olderThanMonths: 6 }, NOW).map((x) => x.id)).toEqual(["e"]);
   });
   it("combines with other filters", () => {
@@ -184,7 +184,7 @@ describe("attachments in Review", () => {
   ]);
   const judged = new Map([...withFiles.keys()].map((id) => [id, fakeAnswers({ promotion: 0.97 })]));
   const settings = { ...DEFAULT_SETTINGS, ageMonths: 0, keepAttachments: false };
-  const all = buildTableRows([...withFiles.keys()], withFiles, judged, new Map(), settings, NOW);
+  const all = buildTableRows([...withFiles.keys()], withFiles, judged, new Map(), settings, NOW, new Set());
   const ids = (f: Partial<typeof NO_FILTERS>) => filterRows(all, { ...NO_FILTERS, ...f }, NOW).map((r) => r.id).sort();
 
   it("carries each email's attachment names on its row", () => {
@@ -204,3 +204,23 @@ describe("attachments in Review", () => {
     expect(ids({ attachments: "with", text: "aunt" })).toEqual(["pic"]);
   });
 });
+
+describe("buildTableRows: trivial personal mail", () => {
+  const on = { ...ANY_AGE, trivialPersonal: true };
+  const mail = new Map([["x", makeSummary("x", { from: "Ann <ann@x.com>", date: "Mon, 01 Jan 2014 00:00:00 +0000" })]]);
+  const personal = fakeAnswers({ none: 1 }, { personal: 0.9 });
+  const row = (a: typeof personal, close: Set<string> = new Set()) => buildTableRows(["x"], mail, new Map([["x", a]]), new Map(), on, NOW, close)[0]!;
+
+  it("explains each reason in plain words", () => {
+    expect(row({ ...personal, significance: 0.1 }, new Set(["ann@x.com"])).reason).toBe("Kept: close person");
+    expect(row(personal).reason).toBe("Kept: personal, not checked yet");
+    expect(row({ ...personal, significance: 0.72 }).reason).toBe("Kept: meaningful 72%");
+    expect(row({ ...personal, significance: 0.15 })).toMatchObject({ label: "purge/personal", slug: "personal", decision: "purge", reason: "personal, trivial 85%" });
+  });
+
+  it("filters by the personal category", () => {
+    const rows = buildTableRows(["x", "p"], new Map([...mail, ["p", summaries.get("p")!]]), new Map([["x", { ...personal, significance: 0.15 }], ["p", answers.get("p")!]]), new Map(), on, NOW, new Set());
+    expect(filterRows(rows, { ...NO_FILTERS, slug: "personal" }, NOW).map((r) => r.id)).toEqual(["x"]);
+  });
+});
+

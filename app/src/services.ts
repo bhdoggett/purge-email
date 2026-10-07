@@ -2,7 +2,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { proxyFetch } from "./bridge/proxyFetch.ts";
 import { localDataKey } from "./bridge/tauri.ts";
 import { createGmail, type Gmail } from "./gmail/client.ts";
-import { createJudge } from "./jev/client.ts";
+import { createJudge, createSignificanceJudge } from "./jev/client.ts";
 import { rateLimit } from "./rateLimit.ts";
 import { ApplyRunner } from "./scan/applyRunner.ts";
 import { ScanEngine } from "./scan/engine.ts";
@@ -52,7 +52,7 @@ export function getServices(): Promise<Services> {
     const gmail = createGmail({ fetch: proxyFetch, onRateLimit: (until) => rateLimit.set(until) });
     // Each checks the other before it starts: a scan and an Apply never run together.
     const applier: ApplyRunner = new ApplyRunner({ gmail, store, isScanning: () => engine.isBusy() });
-    const engine: ScanEngine = new ScanEngine({ gmail, judge: createJudge(), store, notify: (t, b) => void notify(t, b), isBlocked: () => applier.busy() });
+    const engine: ScanEngine = new ScanEngine({ gmail, judge: createJudge(), judgeSignificance: createSignificanceJudge(), store, notify: (t, b) => void notify(t, b), isBlocked: () => applier.busy() });
     return { store, gmail, engine, applier };
   })();
   services.catch(() => {

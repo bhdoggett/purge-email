@@ -166,7 +166,8 @@ describe("ScanEngine while labels are being applied", () => {
     const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     const gmail = createFakeGmail([makeSummary("a")]);
     const judge = vi.fn(async () => fakeAnswers({ promotion: 0.97 }));
-    const engine = new ScanEngine({ gmail, judge, store, isBlocked: () => true });
+    const judgeSignificance = vi.fn(async () => ({ meaningful: 0.5, inputTokens: 1 }));
+    const engine = new ScanEngine({ gmail, judge, judgeSignificance, store, isBlocked: () => true });
     await engine.start(DEFAULT_SETTINGS);
     expect(engine.isBusy()).toBe(false);
     expect(engine.getProgress().stage).toBe("idle");

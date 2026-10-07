@@ -4,6 +4,7 @@ import type { Answers } from "@core/questions.ts";
 import { AppError } from "../bridge/errors.ts";
 import { type Gmail, GmailError, type Summary } from "../gmail/client.ts";
 import type { LabelRecord, Override, ScanRecord, Store } from "../storage/db.ts";
+import { loadCloseSet } from "./closeness.ts";
 import { effectiveLabel } from "./effective.ts";
 
 /** Gmail's lists can lag behind label changes; a record younger than this is never read as a user change. */
@@ -22,6 +23,8 @@ export interface ReconcileInput {
   live: Set<string>;
   /** The user's choices from the Review screen. */
   overrides: Map<string, Override>;
+  /** Addresses of the user's close people (lowercase). */
+  close: ReadonlySet<string>;
 }
 
 export interface ReconcilePlan {
@@ -48,11 +51,12 @@ export async function summarize(store: Store, settings: Settings, now: number = 
   const summaries = await store.allSummaries();
   const answers = await store.allAnswers();
   const overrides = await store.allOverrides();
+  const close = await loadCloseSet(store);
   const counts = { purge: 0, keep: 0, review: 0 };
   for (const id of scan?.candidateIds ?? []) {
     const s = summaries.get(id);
     if (!s) continue;
-    const e = effectiveLabel(s, answers.get(id) ?? null, overrides.get(id), settings, now);
+    const e = effectiveLabel(s, answers.get(id) ?? null, overrides.get(id), settings, now, close);
     counts[e.source === "override" ? (e.label === null ? "keep" : e.label.endsWith("/maybe") ? "review" : "purge") : e.decision]++;
   }
   return counts;
@@ -118,7 +122,7 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
   for (const id of i.candidates) {
     const s = i.summaries.get(id);
     const answers = i.answers.get(id) ?? null;
-    desired.set(id, s ? effectiveLabel(s, answers, overrides.get(id), i.settings, i.now).label : null);
+    desired.set(id, s ? effectiveLabel(s, answers, overrides.get(id), i.settings, i.now, i.close).label : null);
   }
 
   // 4. Apply to live, candidate and just-labeled ids the user hasn't taken over.
@@ -255,6 +259,7 @@ export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?:
     anywhere: state.anywhere,
     live: state.live,
     overrides: await store.allOverrides(),
+    close: await loadCloseSet(store),
   });
 
   const added = new Set([...plan.add.values()].flat());

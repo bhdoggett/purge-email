@@ -8,6 +8,7 @@ import type { Screen } from "../App.tsx";
 import { AgeInput } from "../components/AgeInput.tsx";
 import { Button } from "../components/Button.tsx";
 import type { Summary } from "../gmail/client.ts";
+import { loadCloseSet } from "../scan/closeness.ts";
 import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
 import type { Services } from "../services.ts";
 import type { Override } from "../storage/db.ts";
@@ -37,6 +38,8 @@ interface Loaded {
   ids: string[];
   summaries: Map<string, Summary>;
   answers: Map<string, Answers>;
+  /** The user's close people when the scan was loaded. */
+  close: Set<string>;
 }
 
 const DECISIONS: { id: DecisionFilter; label: string }[] = [
@@ -79,7 +82,7 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
     try {
       const settings = await store.getSettings();
       const scan = await store.getScan();
-      const [summaries, answers, saved] = await Promise.all([store.allSummaries(), store.allAnswers(), store.allOverrides()]);
+      const [summaries, answers, saved, close] = await Promise.all([store.allSummaries(), store.allAnswers(), store.allOverrides(), loadCloseSet(store)]);
       setOverrides(saved);
       setData({
         settings,
@@ -89,6 +92,7 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
         ids: scan?.candidateIds ?? [],
         summaries,
         answers,
+        close,
       });
     } catch (e) {
       setLoadError(`Could not load your scan. ${errorText(e)}`);
@@ -99,7 +103,7 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
     void load();
   }, []);
 
-  const rows = useMemo(() => (data ? buildTableRows(data.ids, data.summaries, data.answers, overrides, data.settings, data.now) : []), [data, overrides]);
+  const rows = useMemo(() => (data ? buildTableRows(data.ids, data.summaries, data.answers, overrides, data.settings, data.now, data.close) : []), [data, overrides]);
   const filtered = useMemo(() => filterRows(rows, filters, data?.now ?? Date.now()), [rows, filters, data]);
   // An action can move selected rows out of the filtered list (e.g. "Undo my change" under "Changed by you").
   // Drop them before paint so the next action never changes an email the person can't see.
