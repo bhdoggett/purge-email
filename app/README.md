@@ -40,7 +40,7 @@ When you first run the app, a 6-step setup wizard walks you through the process:
 5. **Create a Desktop OAuth client**: Create OAuth credentials (type: Desktop app) in Google Cloud and paste the client ID and secret into the app.
 6. **Sign in with Google**: The app opens a browser and asks you to approve access to your Gmail account. Your OAuth credentials are saved to the macOS Keychain.
 
-**Important:** Your Google Cloud project must stay in Testing mode. In Testing mode, Google sign-in expires every 7 days, so the app will periodically ask you to sign in again. All credentials are stored securely in the macOS Keychain under the service name `dev.purge-email`. No `.env` file is needed.
+**Important:** Your Google Cloud project must stay in Testing mode. In Testing mode, Google sign-in expires every 7 days, so the app will periodically ask you to sign in again. The macOS Keychain (under service `dev.purge-email`) securely stores your Jev API key, Google client ID and secret, Gmail refresh token, and Gmail email address. No `.env` file is needed.
 
 ### Development vs. Release Labels
 
@@ -76,7 +76,11 @@ This produces an unsigned `.app` bundle. macOS will ask you to allow it in Syste
 
 ## How It Works
 
-The app has four main screens:
+The app has six main screens:
+
+### Welcome
+
+Shown on first run if you haven't started the setup wizard yet. Explains what the app does and offers a button to begin setup.
 
 ### Setup Wizard (first run only)
 
@@ -84,23 +88,37 @@ See "Setup Wizard" above for the 6-step process that configures your Jev key, Go
 
 ### Rules
 
-Configure which kinds of messages Jev should consider for deletion (newsletters, promotions, social media, etc.) and which kinds to always keep (personal correspondence, receipts, account records, etc.). Choose a strictness level (Careful, Balanced, or Aggressive) and set the age threshold (default: 10 years, meaning older emails are candidates for deletion). You can optionally set a scan limit to test with fewer emails.
+Configure which kinds of messages Jev should consider for deletion (newsletters, promotions, social media, etc.) and which kinds to always keep (personal correspondence, receipts, account records, etc.). Choose a strictness level (Careful, Balanced, or Aggressive) and set the age threshold (default: 10 years, meaning older emails are candidates for deletion). In development builds only, you can set a scan limit to test with fewer emails (appears as "Limit (dev)" field).
 
 ### Scan
 
-The app searches Gmail for emails older than your configured age (excluding attachments and starred messages). For each email, it sends the subject and snippet to the Jev AI model to judge whether it's worth keeping. The scan runs in the background and can be paused or resumed.
+The app searches Gmail for emails older than your configured age (excluding attachments and starred messages). For each email, it sends the following to the Jev AI model to judge whether it's worth keeping:
+- Sender (from), recipients (to, cc)
+- Subject, date, and snippet
+- Whether you've replied in the thread
+- Whether there's an unsubscribe header
+- Gmail labels applied to the email
+
+Email bodies and attachments are never sent to Jev. The scan runs in the background and can be paused or resumed.
 
 ### Review
 
 After a scan completes, you'll see a summary of emails Jev labeled for purging, plus how many it marked to keep and how many it wasn't sure about.
 
-You have two options to complete the deletion:
+You have three options to complete the deletion:
 
-**Option 1: Use the in-app "Move to Trash" button**
+**Option 1: Use the in-app "Move N to Trash" button**
 This moves each labeled email on its own, so replies in the same conversation thread stay intact. Trash empties itself after 30 days.
 
 **Option 2: Delete in Gmail directly**
-Click "Open in Gmail" to see the labeled emails in Gmail. You can star or remove the label from any you want to keep. To delete the rest, go to Gmail Settings (gear) → See all settings → General tab, turn off Conversation view, then search for `label:purge`, select all, and delete. (Turning off Conversation view prevents deleting newer replies in the same thread.)
+Click "Open in Gmail" to see the labeled emails in Gmail. You can star or remove the label from any you want to keep. To delete the rest, go to Gmail Settings (gear) → See all settings → General tab, turn off Conversation view, then search for `label:purge` (or `label:purge-test` in development builds), select all, and delete. (Turning off Conversation view prevents deleting newer replies in the same thread.)
+
+**Option 3: Empty the spam folder**
+Use the in-app "Empty spam folder" button to move all emails in your spam folder to Trash in one action. This also moves each email individually to preserve conversation threads. Trash empties itself after 30 days.
+
+### Settings
+
+Access settings from a button in the header. Here you can remove your saved Jev key, Google credentials, and scan data to start fresh or switch accounts.
 
 ## Architecture
 
