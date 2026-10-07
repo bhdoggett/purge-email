@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { type Settings, type Strictness } from "@core/decide.ts";
+import { candidateQuery, validatePrefix } from "@core/labels.ts";
 import { PROTECTS, PURGE_KINDS } from "@core/questions.ts";
 import { Button } from "../components/Button.tsx";
 import { Checkbox } from "../components/Checkbox.tsx";
-import { formatDuration, formatUsd } from "../format.ts";
+import { formatDuration, formatUsd, labelPreview } from "../format.ts";
 import { estimate } from "../scan/estimate.ts";
 import type { ScanRecord } from "../storage/db.ts";
 import type { Services } from "../services.ts";
@@ -24,6 +25,7 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
   const [scan, setScan] = useState<ScanRecord | null>(null);
   const [est, setEst] = useState<Awaited<ReturnType<typeof estimate>> | null>(null);
   const [estError, setEstError] = useState<string | null>(null);
+  const [prefixDraft, setPrefixDraft] = useState<string | null>(null);
   const [limit, setLimit] = useState<number | undefined>(import.meta.env.DEV ? 20 : undefined);
 
   useEffect(() => {
@@ -37,7 +39,7 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
     setEstError(null);
     estimate(services, settings, limit).then(setEst, (e) => setEstError(e instanceof Error ? e.message : String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [services, settings?.years, limit]);
+  }, [services, settings?.years, settings?.keepAttachments, settings?.keepStarred, limit]);
 
   if (!settings) return null;
 
@@ -45,6 +47,12 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
     const next = { ...settings, ...patch };
     setSettings(next);
     void services.store.putSettings(next);
+  };
+  const prefixText = prefixDraft ?? settings.labelPrefix;
+  const prefixError = validatePrefix(prefixText);
+  const changePrefix = (value: string) => {
+    setPrefixDraft(value);
+    if (validatePrefix(value) === null) update({ labelPrefix: value.trim() });
   };
   const toggle = <T,>(list: T[], item: T, on: boolean) => (on ? [...list, item] : list.filter((x) => x !== item));
   // A limited scan always builds a fresh candidate list, so it never resumes.
@@ -77,8 +85,10 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
           {PROTECTS.map((p) => (
             <Checkbox key={p.id} label={p.label} description={p.examples} checked={settings.protects.includes(p.id)} onChange={(on) => update({ protects: toggle(settings.protects, p.id, on) })} />
           ))}
-          <Checkbox label="Emails with attachments" checked locked />
-          <Checkbox label="Starred emails" checked locked />
+          <Checkbox label="Emails with attachments" checked={settings.keepAttachments} onChange={(on) => update({ keepAttachments: on })} />
+          {!settings.keepAttachments && <p className={styles.choiceNote}>Jev will also judge these. File names are sent, never the files.</p>}
+          <Checkbox label="Starred emails" checked={settings.keepStarred} onChange={(on) => update({ keepStarred: on })} />
+          {!settings.keepStarred && <p className={styles.choiceNote}>Starred emails can be labeled and trashed.</p>}
         </fieldset>
       </div>
 
@@ -94,6 +104,25 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
           ))}
         </div>
       </fieldset>
+
+      <div className={styles.labelName}>
+        <label className={styles.labelNameField}>
+          Label name
+          <input
+            type="text"
+            value={prefixText}
+            disabled={busy}
+            maxLength={80}
+            aria-invalid={prefixError !== null}
+            aria-describedby="label-name-help"
+            onChange={(e) => changePrefix(e.target.value)}
+          />
+        </label>
+        <div id="label-name-help">
+          {prefixError && <p className={styles.fieldError} role="alert">{prefixError}</p>}
+          {!prefixError && <p className={styles.preview}>{labelPreview(prefixText)}</p>}
+        </div>
+      </div>
 
       <div className={styles.footer}>
         <label className={styles.years}>
@@ -114,7 +143,7 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
               ? `${est.count.toLocaleString()} emails · about ${formatUsd(est.costUsd)} · about ${formatDuration(est.ms)}`
               : "Counting emails…"}
         </p>
-        <Button disabled={busy || est?.count === 0} onClick={startScan}>
+        <Button disabled={busy || est?.count === 0 || prefixError !== null} onClick={startScan}>
           {resumable ? "Resume scan" : "Start scan"}
         </Button>
       </div>

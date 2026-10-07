@@ -12,3 +12,8 @@ export function formatUsd(usd: number): string {
 export function displaySubject(subject: string): string {
   return subject.trim() || "(no subject)";
 }
+
+export function labelPreview(prefix: string): string {
+  const p = prefix.trim();
+  return `Labels will look like ${p}/newsletter, ${p}/promotion, … and ${p}/maybe for ones to check.`;
+}

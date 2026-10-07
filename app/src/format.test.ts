@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displaySubject, formatDuration, formatUsd } from "./format.ts";
+import { displaySubject, formatDuration, formatUsd, labelPreview } from "./format.ts";
 
 describe("format", () => {
   it("formats durations", () => {
@@ -14,5 +14,11 @@ describe("format", () => {
   it("shows a placeholder for an empty subject", () => {
     expect(displaySubject("")).toBe("(no subject)");
     expect(displaySubject("Hi")).toBe("Hi");
+  });
+});
+
+describe("labelPreview", () => {
+  it("shows the trimmed prefix in example labels", () => {
+    expect(labelPreview("  purge ")).toBe("Labels will look like purge/newsletter, purge/promotion, … and purge/maybe for ones to check.");
   });
 });

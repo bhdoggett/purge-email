@@ -53,9 +53,9 @@ export function Scan({ services, go, openWizard }: { services: Services; go: (s:
 
       {p.job === "scan" && (
         <dl className={styles.counts}>
-          <div><dt>Labeled for purge</dt><dd className={styles.purge}>{p.counts.purge.toLocaleString()}</dd></div>
+          <div><dt>To purge</dt><dd className={styles.purge}>{p.counts.purge.toLocaleString()}</dd></div>
+          <div><dt>To check (maybe)</dt><dd className={styles.review}>{p.counts.maybe.toLocaleString()}</dd></div>
           <div><dt>Kept</dt><dd className={styles.keep}>{p.counts.keep.toLocaleString()}</dd></div>
-          <div><dt>Needs a look</dt><dd className={styles.review}>{p.counts.review.toLocaleString()}</dd></div>
           <div><dt>Failed</dt><dd>{p.counts.failed.toLocaleString()}</dd></div>
           <div><dt>Jev cost so far</dt><dd>{formatUsd(p.costUsd)}</dd></div>
         </dl>

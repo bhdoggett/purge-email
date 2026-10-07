@@ -13,7 +13,7 @@ export function Feed({ items }: { items: FeedItem[] }) {
           <span className={styles.who}>{item.from.replace(/<.*>/, "").trim() || "(unknown sender)"}</span>
           <span className={styles.subject}>{displaySubject(item.subject)}</span>
           <span className={[styles.decision, styles[item.decision]].join(" ")}>
-            {LABEL[item.decision]} <span className={styles.reason}>({item.reason})</span>
+            {item.label ? `→ ${item.label}` : LABEL[item.decision]} <span className={styles.reason}>({item.reason})</span>
           </span>
         </li>
       ))}
