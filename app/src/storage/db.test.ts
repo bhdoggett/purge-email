@@ -4,7 +4,7 @@ import { QUESTIONS_VERSION } from "@core/questions.ts";
 import { openDB } from "idb";
 import { openStore } from "./db.ts";
 import { randomKeyBase64, testKey } from "../test/key.ts";
-import { encryptJson, importDataKey } from "./crypto.ts";
+import { encryptJson, importDataKey, isSealed } from "./crypto.ts";
 
 const summary = { id: "m1", threadId: "t1", from: "a", to: "b", cc: "", subject: "s", date: "d", snippet: "x", labels: [], hasListUnsubscribe: false, attachmentNames: [] };
 const answers = { version: QUESTIONS_VERSION, kind: { newsletter: 1, promotion: 0, social: 0, securityAlert: 0, shipping: 0, scam: 0, work: 0, automated: 0, none: 0 }, protect: { personal: 0, financial: 0, accountLegal: 0 }, inputTokens: 700 };
@@ -447,3 +447,68 @@ describe("encryption at rest", () => {
     expect(ms).toBeLessThan(30_000);
   });
 });
+
+describe("close people data", () => {
+  const stats = { ownAddress: "me@gmail.com", counted: ["s1"], people: [{ address: "ann.lee@example.com", name: "Ann Lee", nameAt: 1, sent: 12, years: [2019, 2020] }] };
+
+  async function rawKv(name: string, key: string) {
+    const db = await openDB(name);
+    try {
+      return await db.get("kv", key);
+    } finally {
+      db.close();
+    }
+  }
+
+  it("round-trips sender stats and close choices, encrypted", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const store = await openStore(testKey, name);
+    expect(await store.getSenderStats()).toBeNull();
+    expect(await store.getCloseChoices()).toEqual({});
+    await store.putSenderStats(stats);
+    await store.putCloseChoices({ "ann.lee@example.com": false, "bo@example.com": true });
+    expect(await store.getSenderStats()).toEqual(stats);
+    expect(await store.getCloseChoices()).toEqual({ "ann.lee@example.com": false, "bo@example.com": true });
+
+    for (const key of ["senderStats", "closeChoices"]) {
+      const raw = await rawKv(name, key);
+      expect(isSealed(raw)).toBe(true);
+      const bytes = new TextDecoder("latin1").decode((raw as { data: ArrayBuffer }).data);
+      expect(bytes).not.toContain("example.com");
+      expect(JSON.stringify(raw)).not.toContain("example.com");
+    }
+  });
+
+  it("keeps them when scan data is cleared", async () => {
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
+    await store.putSenderStats(stats);
+    await store.putCloseChoices({ "bo@example.com": true });
+    await store.clearScanData();
+    expect(await store.getSenderStats()).toEqual(stats);
+    expect(await store.getCloseChoices()).toEqual({ "bo@example.com": true });
+  });
+
+  it("reads unreadable data as none instead of failing", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const store = await openStore(testKey, name);
+    const db = await openDB(name);
+    await db.put("kv", await encryptJson(await testKey(), stats, "closeChoices"), "senderStats");
+    await db.put("kv", "garbage", "closeChoices");
+    db.close();
+    expect(await store.getSenderStats()).toBeNull();
+    expect(await store.getCloseChoices()).toEqual({});
+  });
+
+  it("clears them with the scan data when the key changes", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const a = await openStore(await importDataKey(randomKeyBase64()), name);
+    await a.putSenderStats(stats);
+    await a.putCloseChoices({ "bo@example.com": true });
+    const b = await openStore(await importDataKey(randomKeyBase64()), name);
+    expect(await b.getSenderStats()).toBeNull();
+    expect(await b.getCloseChoices()).toEqual({});
+    expect(await rawKv(name, "senderStats")).toBeUndefined();
+    expect(await rawKv(name, "closeChoices")).toBeUndefined();
+  });
+});
+

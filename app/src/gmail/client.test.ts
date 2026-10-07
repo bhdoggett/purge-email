@@ -198,4 +198,14 @@ describe("gmail client", () => {
     expect(create).toHaveBeenCalledTimes(2);
     expect(JSON.parse(create.mock.calls[1]![1].body).name).toBe("purge/maybe");
   });
+
+  it("reads only the asked headers, by metadata, keyed by lowercase name", async () => {
+    const fetch = vi.fn().mockResolvedValue(json(200, { payload: { headers: [{ name: "To", value: "Ann <ann@x.com>" }, { name: "Date", value: "Mon, 1 Jan 2024" }] } }));
+    const gmail = createGmail({ fetch, sleep: noSleep });
+    expect(await gmail.getHeaders("m1", ["To", "Cc", "Date"])).toEqual({ to: "Ann <ann@x.com>", date: "Mon, 1 Jan 2024" });
+    const url = new URL(fetch.mock.calls[0]![0] as string);
+    expect(url.pathname).toMatch(/\/messages\/m1$/);
+    expect(url.searchParams.get("format")).toBe("metadata");
+    expect(url.searchParams.getAll("metadataHeaders")).toEqual(["To", "Cc", "Date"]);
+  });
 });

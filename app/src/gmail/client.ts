@@ -53,6 +53,8 @@ export interface ListOptions {
 export interface Gmail {
   listIds(q: string, limit?: number, opts?: ListOptions): Promise<{ id: string; threadId: string }[]>;
   getSummary(id: string): Promise<Summary>;
+  /** The named headers of one message (metadata only, no body), keyed by lowercase name. Missing headers are left out. */
+  getHeaders(id: string, names: string[]): Promise<Record<string, string>>;
   ensureLabel(name: string): Promise<string>;
   findLabelId(name: string): Promise<string | null>;
   addLabel(labelId: string, ids: string[]): Promise<void>;
@@ -190,6 +192,15 @@ export function createGmail(opts: GmailOptions): Gmail {
         hasListUnsubscribe: headers.has("list-unsubscribe"),
         attachmentNames,
       };
+    },
+
+    async getHeaders(id, names) {
+      const params = new URLSearchParams({ format: "metadata", fields: "payload/headers" });
+      for (const n of names) params.append("metadataHeaders", n);
+      const m = await call<{ payload?: { headers?: { name?: string; value?: string }[] } }>("GET", `/messages/${id}?${params}`);
+      const out: Record<string, string> = {};
+      for (const h of m.payload?.headers ?? []) if (h.name) out[h.name.toLowerCase()] = h.value ?? "";
+      return out;
     },
 
     async ensureLabel(name) {

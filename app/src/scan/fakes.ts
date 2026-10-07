@@ -25,6 +25,8 @@ export interface FakeGmail extends Gmail {
   expireAfter: number | null;
   /** Age in months per message, used for `older_than:` queries. Defaults to 240. */
   ages: Map<string, number>;
+  /** Sent messages by id, listed by `in:sent` and read by `getHeaders`. */
+  sent: Map<string, { to: string; cc: string; date: string }>;
 }
 
 /** In-memory Gmail. `labelsOf` maps each message to the label names it carries. */
@@ -38,6 +40,7 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
     failIds: new Set(),
     expireAfter: null,
     ages: new Map(),
+    sent: new Map(),
     async listIds(q, limit = Infinity, opts) {
       let ids: { id: string; threadId: string }[];
       // The STARRED system label comes from the message summary; the others from `labelsOf`.
@@ -49,7 +52,7 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
       if (opts?.labelIds) {
         if (q !== "") throw new Error(`the fake reads labels by id only, got q=${JSON.stringify(q)}`);
         ids = withLabels(opts.labelIds, opts.includeSpamTrash ?? false);
-      } else if (q.startsWith("in:sent")) ids = [];
+      } else if (q.startsWith("in:sent")) ids = [...fake.sent.keys()].map((id) => ({ id, threadId: id }));
       else {
         const months = Number(/older_than:(\d+)m/.exec(q)?.[1] ?? 0);
         ids = messages.filter((m) => (fake.ages.get(m.id) ?? 240) >= months).map((m) => ({ id: m.id, threadId: m.threadId }));
@@ -64,6 +67,12 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
       }
       if (fake.failIds.has(id)) throw new Error(`boom ${id}`);
       return byId.get(id)!;
+    },
+    async getHeaders(id, names) {
+      const m = fake.sent.get(id) ?? byId.get(id);
+      if (!m) throw new Error(`no message ${id}`);
+      const all: Record<string, string> = { to: m.to, cc: m.cc, date: m.date };
+      return Object.fromEntries(names.map((n) => n.toLowerCase()).filter((n) => all[n]).map((n) => [n, all[n]!]));
     },
     async ensureLabel(name) {
       created.add(name);

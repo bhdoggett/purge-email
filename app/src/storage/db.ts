@@ -33,6 +33,28 @@ export interface ScanRecord {
   msPerEmail: number | null;
 }
 
+/** How often the user wrote to one address, counted from their Sent mail. */
+export interface SenderStat {
+  /** Lowercase email address. */
+  address: string;
+  /** The newest non-empty display name seen for the address. */
+  name: string;
+  /** Date (ms) of the email `name` came from; 0 when unknown. */
+  nameAt: number;
+  /** Sent emails addressed to them (To or Cc). */
+  sent: number;
+  /** Distinct calendar years those emails were sent in, ascending. */
+  years: number[];
+}
+
+/** Counts from the user's Sent mail. Stored encrypted, with the ids already counted so a recount only reads new mail. */
+export interface SenderStats {
+  /** The account the counts belong to, lowercase. */
+  ownAddress: string;
+  counted: string[];
+  people: SenderStat[];
+}
+
 /** A summary at rest: everything but the id is encrypted. */
 type SealedSummary = Sealed & { id: string };
 
@@ -68,6 +90,12 @@ export interface Store {
   putOverrides(ids: string[], slug: string | null, at: number): Promise<void>;
   putOverrideList(list: Override[]): Promise<void>;
   deleteOverrides(ids: string[]): Promise<void>;
+  /** Counts from Sent mail, or null when never counted (or unreadable). */
+  getSenderStats(): Promise<SenderStats | null>;
+  putSenderStats(s: SenderStats): Promise<void>;
+  /** The user's own Close ticks: address → close or not. Empty when none (or unreadable). */
+  getCloseChoices(): Promise<Record<string, boolean>>;
+  putCloseChoices(c: Record<string, boolean>): Promise<void>;
   /** Forgets summaries, Jev answers, and the scan. Keeps label records and overrides so the user's choices are remembered. */
   clearScanData(): Promise<void>;
 }
@@ -98,6 +126,9 @@ const MIGRATION_BATCH = 500;
 const DECRYPT_CHUNK = 2000;
 /** kv entry holding "ok" sealed with the key the saved scan data was written with. */
 const KEY_CHECK = "keyCheck";
+/** kv entries sealed with the data key; not scan data, so only a key change clears them. */
+const SENDER_STATS = "senderStats";
+const CLOSE_CHOICES = "closeChoices";
 
 /**
  * Decrypts a stored record bound to `id`; a record the key can't open (wrong key, or moved to
@@ -209,8 +240,8 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
   }
 
   /**
-   * Removes summaries, answers and the scan in one transaction; with `check`, also records the key
-   * the data will be written with from now on.
+   * Removes summaries, answers and the scan in one transaction; with `check` (a new key), also the
+   * close people data, and records the key the data will be written with from now on.
    */
   async function clearScan(check?: Sealed) {
     const tx = db.transaction(["summaries", "answers", "kv"], "readwrite");
@@ -218,7 +249,8 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
       tx.objectStore("summaries").clear(),
       tx.objectStore("answers").clear(),
       tx.objectStore("kv").delete("scan"),
-      ...(check ? [tx.objectStore("kv").put(check, KEY_CHECK)] : []),
+      // A new key can't read the close people data either, so it goes with the scan data.
+      ...(check ? [tx.objectStore("kv").put(check, KEY_CHECK), tx.objectStore("kv").delete(SENDER_STATS), tx.objectStore("kv").delete(CLOSE_CHOICES)] : []),
       tx.done,
     ]);
     summaryCache = null;
@@ -285,6 +317,18 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
     return load;
   }
 
+  /** A kv value sealed with the data key under its own name; missing, plaintext or unreadable reads as undefined. */
+  async function getSealedKv<T>(name: string): Promise<T | undefined> {
+    const k = await ready();
+    const stored = await db.get("kv", name);
+    return isSealed(stored) ? unseal<T>(k, name, stored) : undefined;
+  }
+
+  async function putSealedKv(name: string, value: unknown): Promise<void> {
+    const k = await ready();
+    await db.put("kv", await encryptJson(k, value, name), name);
+  }
+
   return {
     getSummary: async (id) => unsealSummary(await ready(), await db.get("summaries", id)),
     async putSummary(s) {
@@ -342,6 +386,10 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
       const tx = db.transaction("overrides", "readwrite");
       await Promise.all([...ids.map((id) => tx.store.delete(id)), tx.done]);
     },
+    getSenderStats: async () => (await getSealedKv<SenderStats>(SENDER_STATS)) ?? null,
+    putSenderStats: (s) => putSealedKv(SENDER_STATS, s),
+    getCloseChoices: async () => (await getSealedKv<Record<string, boolean>>(CLOSE_CHOICES)) ?? {},
+    putCloseChoices: (c) => putSealedKv(CLOSE_CHOICES, c),
     clearScanData: () => clearScan(),
   };
 }
