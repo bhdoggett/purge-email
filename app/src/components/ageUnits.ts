@@ -8,6 +8,11 @@ export function initialUnit(months: number): AgeUnit {
   return months % 12 === 0 ? "years" : "months";
 }
 
+/** `unit`, unless the months no longer fit whole years: then months, so the field never shows a fraction. */
+export function fittingUnit(months: number, unit: AgeUnit): AgeUnit {
+  return unit === "years" && months % 12 !== 0 ? "months" : unit;
+}
+
 export function shownNumber(months: number, unit: AgeUnit): number {
   return unit === "years" ? months / 12 : months;
 }

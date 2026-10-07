@@ -55,7 +55,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
           // Nothing to change in Gmail, but the plan may still stamp records (e.g. an override already in effect).
           // Save those now: applyPreview makes no Gmail calls when there is nothing to add or remove.
           if ((preview.plan.put.length > 0 || preview.plan.del.length > 0) && !engine.isBusy()) {
-            await applyPreview({ gmail, store }, settings, preview);
+            await applyPreview({ gmail, store }, preview);
           }
           const rows = buildRows(await countByLabel(gmail, settings), settings.labelPrefix);
           setData({ kind: "done", settings, rows, deferred: preview.plan.deferred });
@@ -93,7 +93,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         setMessage("Gmail changed since this screen opened. Check the new numbers, then apply.");
         return;
       }
-      await applyPreview({ gmail, store }, data.settings, fresh);
+      await applyPreview({ gmail, store }, fresh);
       setMessage(appliedMessage(fresh, fresh.oldPrefixes));
       await load();
     } catch (e) {

@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { ageFromInput, type AgeUnit, initialUnit, MAX_MONTHS, MAX_YEARS, shownNumber, switchUnit } from "./ageUnits.ts";
+import { ageFromInput, type AgeUnit, fittingUnit, initialUnit, MAX_MONTHS, MAX_YEARS, shownNumber, switchUnit } from "./ageUnits.ts";
 import styles from "./AgeInput.module.css";
 
 interface Props {
@@ -15,7 +15,9 @@ interface Props {
 /** "Older than [number] [months|years]". The unit is display only: the value is always months. */
 export function AgeInput({ months, onChange, disabled, zero = "suffix", className }: Props) {
   const id = useId();
-  const [unit, setUnit] = useState<AgeUnit>(() => initialUnit(months));
+  const [chosen, setUnit] = useState<AgeUnit>(() => initialUnit(months));
+  // A value set from outside that isn't whole years is shown in months.
+  const unit = fittingUnit(months, chosen);
   const empty = zero === "placeholder" && months === 0;
 
   const changeUnit = (next: AgeUnit) => {

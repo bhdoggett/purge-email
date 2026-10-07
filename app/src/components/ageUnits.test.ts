@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { ageFromInput, initialUnit, MAX_MONTHS, shownNumber, switchUnit } from "./ageUnits.ts";
+import { ageFromInput, fittingUnit, initialUnit, MAX_MONTHS, shownNumber, switchUnit } from "./ageUnits.ts";
 
 describe("age units", () => {
   it("starts in years when the months divide by 12", () => {
     expect(initialUnit(120)).toBe("years");
     expect(initialUnit(0)).toBe("years");
     expect(initialUnit(18)).toBe("months");
+  });
+  it("switches to months when the age no longer fits whole years", () => {
+    expect(fittingUnit(18, "years")).toBe("months");
+    expect(fittingUnit(24, "years")).toBe("years");
+    expect(fittingUnit(18, "months")).toBe("months");
+    expect(fittingUnit(24, "months")).toBe("months");
   });
   it("shows the number in the chosen unit", () => {
     expect(shownNumber(24, "years")).toBe(2);

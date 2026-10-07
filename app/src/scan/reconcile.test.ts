@@ -7,7 +7,7 @@ import { type LabelRecord, openStore } from "../storage/db.ts";
 import { createFakeGmail, fakeAnswers, idsWithLabel, makeSummary } from "./fakes.ts";
 import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
-import { applyPreview, countByLabel, isPending, labelTotalsAfter, planReconcile, prefixInUseByUser, previewReconcile, type ReconcileInput, reconcile, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
+import { applyPreview, countByLabel, scanCounts, isPending, labelTotalsAfter, planReconcile, prefixInUseByUser, previewReconcile, type ReconcileInput, reconcile, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
 
 /** A real date, so mail dated 2014 (the makeSummary default) is old enough for the default age. */
 const NOW = new Date(2026, 9, 7, 12).getTime();
@@ -627,6 +627,34 @@ describe("summarize", () => {
   });
 });
 
+describe("scanCounts", () => {
+  async function arrange() {
+    const store = await openStore(`t-${crypto.randomUUID()}`);
+    for (const id of ["news", "promo"]) await store.putSummary(makeSummary(id));
+    await store.putAnswers("news", fakeAnswers({ newsletter: 0.95 }));
+    await store.putAnswers("promo", fakeAnswers({ promotion: 0.95 }));
+    await store.putScan({ ageMonths: 120, candidateIds: ["news", "promo"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
+    return store;
+  }
+
+  it("counts under the current rules when the scan covers them", async () => {
+    const store = await arrange();
+    const settings = { ...DEFAULT_SETTINGS, purgeKinds: DEFAULT_SETTINGS.purgeKinds.filter((k) => k !== "promotion") };
+    expect(await scanCounts(store, (await store.getScan())!, settings)).toEqual({ purge: 1, keep: 1, review: 0 });
+  });
+
+  it("gives no counts when the rules widened since the scan", async () => {
+    const store = await arrange();
+    expect(await scanCounts(store, (await store.getScan())!, { ...DEFAULT_SETTINGS, ageMonths: 6 })).toBeNull();
+    expect(await scanCounts(store, (await store.getScan())!, { ...DEFAULT_SETTINGS, keepStarred: false })).toBeNull();
+  });
+
+  it("gives no counts for a scan that never finished", async () => {
+    const store = await arrange();
+    expect(await scanCounts(store, { ...(await store.getScan())!, settingsAtScan: null }, DEFAULT_SETTINGS)).toBeNull();
+  });
+});
+
 describe("labelTotalsAfter", () => {
   it("counts live labels after adds and removes", () => {
     const plan = planReconcile(
@@ -660,7 +688,7 @@ describe("previewReconcile", () => {
     expect(idsWithLabel(gmail, "purge/promotion")).toEqual([]);
     expect((await store.allLabels()).size).toBe(0);
 
-    await applyPreview({ gmail, store }, DEFAULT_SETTINGS, preview);
+    await applyPreview({ gmail, store }, preview);
     expect(idsWithLabel(gmail, "purge/promotion")).toEqual(["a"]);
     expect((await store.allLabels()).get("a")?.label).toBe("purge/promotion");
   });
@@ -670,7 +698,7 @@ describe("previewReconcile", () => {
     const anyAge = { ...DEFAULT_SETTINGS, ageMonths: 0 };
     await store.putScan({ ...(await store.getScan())!, ageMonths: 0, settings: anyAge, settingsAtScan: anyAge });
     const narrower = { ...DEFAULT_SETTINGS, ageMonths: 60 };
-    await applyPreview({ gmail, store }, narrower, await previewReconcile({ gmail, store, now: () => NOW }, narrower));
+    await applyPreview({ gmail, store }, await previewReconcile({ gmail, store, now: () => NOW }, narrower));
     const scan = (await store.getScan())!;
     expect(scan.settingsAtScan).toEqual(anyAge);
     expect(needsRescan(scan.settingsAtScan!, anyAge)).toBe(false);
@@ -722,7 +750,7 @@ describe("previewReconcile", () => {
     expect(isPending(preview)).toBe(false);
     expect(preview.plan.put.length).toBeGreaterThan(0);
     const writes = (["ensureLabel", "addLabel", "removeLabel"] as const).map((m) => vi.spyOn(gmail, m));
-    await applyPreview({ gmail, store }, DEFAULT_SETTINGS, preview);
+    await applyPreview({ gmail, store }, preview);
     for (const spy of writes) expect(spy).not.toHaveBeenCalled();
 
     // The user takes the label off in Gmail; once the grace window passes, that removal is theirs.

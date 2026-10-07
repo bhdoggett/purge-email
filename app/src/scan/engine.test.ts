@@ -252,6 +252,19 @@ describe("ScanEngine", () => {
       expect((await store.getScan())?.startedAt).toBe(0);
     });
 
+    it("reuses an unfinished scan saved under wider rules when starting with narrower ones", async () => {
+      const { engine, store } = await setup([makeSummary("promo"), makeSummary("other")]);
+      const wide = { ...T, ageMonths: 0, keepStarred: false };
+      const narrow = { ...T, ageMonths: 60 };
+      await store.putScan({ ageMonths: 0, settings: wide, candidateIds: ["promo"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });
+      await engine.start(narrow);
+      const scan = (await store.getScan())!;
+      expect(scan.startedAt).toBe(0);
+      expect(scan.candidateIds).toEqual(["promo"]);
+      expect(scan.finished).toBe(true);
+      expect(scan.settingsAtScan).toEqual(narrow);
+    });
+
     it("builds a fresh candidate list for an unfinished scan saved without settings", async () => {
       const { engine, store } = await setup([makeSummary("promo")]);
       await store.putScan({ ageMonths: T.ageMonths, candidateIds: ["stale"], repliedThreadIds: [], finished: false, startedAt: 0, settingsAtScan: null, msPerEmail: null });

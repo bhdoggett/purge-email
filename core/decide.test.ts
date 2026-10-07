@@ -113,6 +113,12 @@ describe("cutoff", () => {
     expect(cutoff(new Date(2026, 1, 15).getTime(), 3)).toBe(new Date(2025, 10, 15).getTime());
     expect(cutoff(new Date(2026, 0, 1).getTime(), 1)).toBe(new Date(2025, 11, 1).getTime());
   });
+  it("clamps to the last day of a shorter month", () => {
+    expect(cutoff(new Date(2025, 2, 31, 12).getTime(), 1)).toBe(new Date(2025, 1, 28, 12).getTime());
+    expect(cutoff(new Date(2024, 1, 29, 12).getTime(), 12)).toBe(new Date(2023, 1, 28, 12).getTime());
+    expect(cutoff(new Date(2026, 4, 31, 12).getTime(), 1)).toBe(new Date(2026, 3, 30, 12).getTime());
+    expect(cutoff(new Date(2026, 0, 31, 12).getTime(), 1)).toBe(new Date(2025, 11, 31, 12).getTime());
+  });
   it("returns now for 0 months", () => {
     expect(cutoff(NOW, 0)).toBe(NOW);
   });

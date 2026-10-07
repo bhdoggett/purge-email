@@ -1,9 +1,9 @@
 import type { Settings } from "@core/decide.ts";
-import { appLabelNames } from "@core/labels.ts";
+import { appLabelNames, needsRescan } from "@core/labels.ts";
 import type { Answers } from "@core/questions.ts";
 import { AppError } from "../bridge/errors.ts";
 import { type Gmail, GmailError, type Summary } from "../gmail/client.ts";
-import type { LabelRecord, Override, Store } from "../storage/db.ts";
+import type { LabelRecord, Override, ScanRecord, Store } from "../storage/db.ts";
 import { effectiveLabel } from "./effective.ts";
 
 /** Gmail's lists can lag behind label changes; a record younger than this is never read as a user change. */
@@ -56,6 +56,12 @@ export async function summarize(store: Store, settings: Settings, now: number = 
     counts[e.source === "override" ? (e.label === null ? "keep" : e.label.endsWith("/maybe") ? "review" : "purge") : e.decision]++;
   }
   return counts;
+}
+
+/** Counts for a finished scan under the current rules, or null when the scan doesn't cover them (or never finished). */
+export async function scanCounts(store: Store, scan: ScanRecord, settings: Settings, now: number = Date.now()): Promise<{ purge: number; keep: number; review: number } | null> {
+  if (!scan.settingsAtScan || needsRescan(scan.settingsAtScan, settings)) return null;
+  return summarize(store, settings, now);
 }
 
 function push(map: Map<string, string[]>, key: string, id: string) {
@@ -257,7 +263,7 @@ export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?:
 }
 
 /** Writes a previewed plan to Gmail and the store. */
-export async function applyPreview(deps: { gmail: Gmail; store: Store }, settings: Settings, preview: Preview): Promise<void> {
+export async function applyPreview(deps: { gmail: Gmail; store: Store }, preview: Preview): Promise<void> {
   const { gmail, store } = deps;
   const { plan } = preview;
   // Add before remove: if this stops halfway, an email has two labels rather than none.
@@ -283,7 +289,7 @@ export async function reconcile(
   settings: Settings,
 ): Promise<{ added: number; removed: number; moved: number; userRemoved: number; userChosen: number; deferred: number }> {
   const p = await previewReconcile(deps, settings);
-  await applyPreview(deps, settings, p);
+  await applyPreview(deps, p);
   return { added: p.added, removed: p.removed, moved: p.moved, userRemoved: p.plan.userRemoved, userChosen: p.plan.userChosen, deferred: p.plan.deferred };
 }
 

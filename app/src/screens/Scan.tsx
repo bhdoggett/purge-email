@@ -4,7 +4,7 @@ import { Button } from "../components/Button.tsx";
 import { Feed } from "../components/Feed.tsx";
 import { ProgressBar } from "../components/ProgressBar.tsx";
 import { formatDuration, formatUsd } from "../format.ts";
-import { summarize } from "../scan/reconcile.ts";
+import { scanCounts } from "../scan/reconcile.ts";
 import type { ScanRecord } from "../storage/db.ts";
 import type { Services } from "../services.ts";
 import { useProgress } from "../useProgress.ts";
@@ -51,7 +51,8 @@ export function Scan({ services, go, openWizard }: { services: Services; go: (s:
     void (async () => {
       const scan = await services.store.getScan();
       if (!scan) return setLast(null);
-      const counts = scan.settingsAtScan ? await summarize(services.store, scan.settingsAtScan) : null;
+      // Counts follow the current rules, like Review and Apply; rules the scan doesn't cover get none.
+      const counts = await scanCounts(services.store, scan, await services.store.getSettings());
       setLast({ scan, counts });
     })();
   }, [p.stage, services.store]);
@@ -65,6 +66,7 @@ export function Scan({ services, go, openWizard }: { services: Services; go: (s:
             <p className={styles.eta}>
               Started {new Date(last.scan.startedAt).toLocaleString()} · {last.scan.candidateIds.length.toLocaleString()} emails checked
             </p>
+            {!last.counts && <p className={styles.eta}>Your rules changed since this scan. Rescan to see counts.</p>}
             {last.counts && (
               <dl className={styles.counts}>
                 <div><dt>To purge</dt><dd className={styles.purge}>{last.counts.purge.toLocaleString()}</dd></div>

@@ -42,10 +42,17 @@ export function normalizeSettings(raw: Partial<Settings> & { years?: number }, d
   return settings;
 }
 
-/** The moment `months` calendar months before `now` (local time). Mail received after it is too new. */
+/**
+ * The moment `months` calendar months before `now` (local time). Mail received after it is too new.
+ * A day the earlier month lacks becomes its last day (Mar 31 minus 1 month is Feb 28), never a later date.
+ */
 export function cutoff(now: number, months: number): number {
   const d = new Date(now);
+  const day = d.getDate();
+  d.setDate(1);
   d.setMonth(d.getMonth() - months);
+  const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, daysInMonth));
   return d.getTime();
 }
 
