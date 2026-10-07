@@ -26,7 +26,9 @@ export class GmailError extends Error {
   }
 }
 
+/** Per-minute limits clear in seconds and are worth waiting out; the daily quota is not. */
 export function isRateLimit(e: GmailError): boolean {
+  if (e.reason === "dailyLimitExceeded") return false;
   if (e.status === 429) return true;
   return e.status === 403 && (/rateLimitExceeded|userRateLimitExceeded|RATE_LIMIT_EXCEEDED/.test(e.reason) || /quota|rate limit/i.test(e.message));
 }

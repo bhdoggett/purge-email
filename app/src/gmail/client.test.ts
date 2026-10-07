@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AppError, SignInExpiredError } from "../bridge/errors.ts";
-import { createGmail, GmailError } from "./client.ts";
+import { createGmail, GmailError, isRateLimit } from "./client.ts";
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -38,6 +38,20 @@ describe("gmail client", () => {
     expect(err).toBeInstanceOf(GmailError);
     expect(err.reason).toBe("SERVICE_DISABLED");
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry the daily quota, even though its message mentions quota", async () => {
+    const fetch = vi.fn().mockResolvedValue(
+      json(403, { error: { code: 403, message: "Quota exceeded for quota metric 'Queries' and limit 'Queries per day'", errors: [{ reason: "dailyLimitExceeded" }] } }),
+    );
+    const onRateLimit = vi.fn();
+    const err = await createGmail({ fetch, sleep: noSleep, onRateLimit }).getProfile().catch((e) => e);
+    expect(err).toBeInstanceOf(GmailError);
+    expect(err.reason).toBe("dailyLimitExceeded");
+    expect(isRateLimit(err)).toBe(false);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(onRateLimit).not.toHaveBeenCalled();
+    expect(isRateLimit(new GmailError(403, "unknown", "Quota exceeded for quota metric per minute"))).toBe(true);
   });
 
   it("retries proxy network errors but not an expired sign-in", async () => {
