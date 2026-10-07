@@ -332,7 +332,51 @@ describe("planReconcile with overrides", () => {
 
   it("never touches an overridden email in Trash or Spam", () => {
     const plan = planReconcile(input({ a: promo }, { anywhere: new Map([["a", "purge/promotion"]]), live: new Set(), records: new Map([["a", rec("a", "purge/promotion")]]), overrides: ov("a", null) }));
-    expect(plan.remove.size).toBe(0);
+    expect(empty(plan)).toBe(true);
+  });
+
+  it("ignores a stale override on a non-candidate the user took over", () => {
+    const records = new Map([["x", rec("x", "purge/social", { userChosen: true })]]);
+    expect(empty(planReconcile(input({}, { records, ...labeled({ x: "purge/social" }), overrides: ov("x", "work", OLD + 1) })))).toBe(true);
+  });
+
+  it("ignores an override on a non-candidate with an unrecorded live app label", () => {
+    // As without an override: the label is only recorded as the user's own, never added or removed.
+    const plan = planReconcile(input({}, { ...labeled({ x: "purge/social" }), overrides: ov("x", "work") }));
+    expect(plan.add.size + plan.remove.size + plan.del.length).toBe(0);
+    expect(plan.put).toEqual([{ id: "x", label: "purge/social", labeledAt: NOW, userRemoved: false, userChosen: true }]);
+  });
+
+  describe("an applied override yields to later Gmail changes", () => {
+    const later = NOW + 2 * USER_CHANGE_GRACE_MS;
+    const apply = (records: Map<string, LabelRecord>, puts: LabelRecord[]) => new Map([...records, ...puts.map((r) => [r.id, r] as const)]);
+    const promo = fakeAnswers({ promotion: 0.97 });
+
+    it("re-adding is not forced after the user removes a satisfied override's label", () => {
+      const overrides = ov("a", "promotion", OLD + 1);
+      const records = new Map([["a", rec("a", "purge/promotion")]]);
+      const run1 = planReconcile(input({ a: promo }, { records, ...labeled({ a: "purge/promotion" }), overrides }));
+      const run2 = planReconcile(input({ a: promo }, { now: later, records: apply(records, run1.put), overrides }));
+      expect(run2.userRemoved).toBe(1);
+      expect(run2.add.size).toBe(0);
+    });
+
+    it("leaves a label the user added by hand after a keep override on a user-removed record", () => {
+      const overrides = ov("a", null, OLD + 1);
+      const records = new Map([["a", rec("a", "purge/promotion", { userRemoved: true })]]);
+      const run1 = planReconcile(input({ a: promo }, { records, overrides }));
+      const run2 = planReconcile(input({ a: promo }, { now: later, records: apply(records, run1.put), ...labeled({ a: "purge/work" }), overrides }));
+      expect(run2.remove.size).toBe(0);
+      expect(run2.add.size).toBe(0);
+    });
+
+    it("records an unrecorded live label that already matches the override, so a later removal sticks", () => {
+      const overrides = ov("a", "promotion");
+      const run1 = planReconcile(input({ a: promo }, { ...labeled({ a: "purge/promotion" }), overrides }));
+      const run2 = planReconcile(input({ a: promo }, { now: later, records: apply(new Map(), run1.put), overrides }));
+      expect(run2.userRemoved).toBe(1);
+      expect(run2.add.size).toBe(0);
+    });
   });
 });
 

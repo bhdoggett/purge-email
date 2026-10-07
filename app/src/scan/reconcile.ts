@@ -88,9 +88,12 @@ function push(map: Map<string, string[]>, key: string, id: string) {
 export function planReconcile(i: ReconcileInput): ReconcilePlan {
   const plan: ReconcilePlan = { add: new Map(), remove: new Map(), put: [], del: [], userRemoved: 0, userChosen: 0, deferred: 0 };
   const records = new Map(i.records);
+  // An override only means something for an email that is still a candidate.
+  const candidateSet = new Set(i.candidates);
+  const overrides = new Map([...i.overrides].filter(([id]) => candidateSet.has(id)));
   const inGrace = (r: LabelRecord) => i.now - r.labeledAt < USER_CHANGE_GRACE_MS;
   /** An override made after the app last labeled this email beats any change the user made in Gmail before it. */
-  const overrideWins = (r: LabelRecord) => (i.overrides.get(r.id)?.at ?? -Infinity) > r.labeledAt;
+  const overrideWins = (r: LabelRecord) => (overrides.get(r.id)?.at ?? -Infinity) > r.labeledAt;
 
   // 1. Detect user changes on records old enough for Gmail's lists to be trusted.
   for (const r of i.records.values()) {
@@ -112,7 +115,7 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
 
   // 2. An app-named label the app has no record of may be the user's own: record it as theirs and never touch it.
   for (const id of i.live) {
-    if (records.has(id) || i.overrides.has(id)) continue;
+    if (records.has(id) || overrides.has(id)) continue;
     const r: LabelRecord = { id, label: i.anywhere.get(id)!, labeledAt: i.now, userRemoved: false, userChosen: true };
     records.set(id, r);
     plan.put.push(r);
@@ -123,7 +126,7 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
   for (const id of i.candidates) {
     const s = i.summaries.get(id);
     const answers = i.answers.get(id) ?? null;
-    desired.set(id, s ? effectiveLabel(s, answers, i.overrides.get(id), i.settings).label : null);
+    desired.set(id, s ? effectiveLabel(s, answers, overrides.get(id), i.settings).label : null);
   }
 
   // 4. Apply to live, candidate and just-labeled ids the user hasn't taken over.
@@ -142,7 +145,14 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
       if (current !== null || want !== r.label) plan.deferred++;
       continue;
     }
-    if (current === want) continue;
+    if (current === want) {
+      // An override already in effect is stamped as applied, so a later Gmail change is read as the user's.
+      if (overrides.has(id) && (r ? overrideWins(r) : isLive)) {
+        if (want !== null) plan.put.push({ id, label: want, labeledAt: i.now, userRemoved: false, userChosen: false });
+        else if (r) plan.put.push({ ...r, labeledAt: i.now });
+      }
+      continue;
+    }
     if (current !== null) push(plan.remove, current, id);
     if (want !== null) {
       push(plan.add, want, id);
