@@ -11,6 +11,13 @@ export interface LabelRecord {
   userChosen: boolean;
 }
 
+/** The user's own label choice for one email, made on the Review screen. `slug` null means keep, no label. */
+export interface Override {
+  id: string;
+  slug: string | null;
+  at: number;
+}
+
 export interface ScanRecord {
   years: number;
   /** Settings the candidate list was built with; missing on scans saved before category labels. */
@@ -32,6 +39,7 @@ interface PurgeDB extends DBSchema {
   answers: { key: string; value: Answers };
   labels: { key: string; value: LabelRecord };
   kv: { key: string; value: unknown };
+  overrides: { key: string; value: Override };
 }
 
 export interface Store {
@@ -50,12 +58,16 @@ export interface Store {
   putScan(s: ScanRecord): Promise<void>;
   getWizard(): Promise<number[]>;
   putWizard(done: number[]): Promise<void>;
-  /** Forgets summaries, Jev answers, and the scan. Keeps label records so user removals are remembered. */
+  allOverrides(): Promise<Map<string, Override>>;
+  putOverrides(ids: string[], slug: string | null, at: number): Promise<void>;
+  putOverrideList(list: Override[]): Promise<void>;
+  deleteOverrides(ids: string[]): Promise<void>;
+  /** Forgets summaries, Jev answers, and the scan. Keeps label records and overrides so the user's choices are remembered. */
   clearScanData(): Promise<void>;
 }
 
 export async function openStore(name = "purge-email", defaults: Settings = DEFAULT_SETTINGS): Promise<Store> {
-  const db = await openDB<PurgeDB>(name, 2, {
+  const db = await openDB<PurgeDB>(name, 3, {
     async upgrade(db, oldVersion, _newVersion, tx) {
       if (oldVersion < 1) {
         db.createObjectStore("summaries", { keyPath: "id" });
@@ -66,6 +78,7 @@ export async function openStore(name = "purge-email", defaults: Settings = DEFAU
         // v1 records have no `label`; they only exist from development, so drop them.
         await tx.objectStore("labels").clear();
       }
+      if (oldVersion < 3) db.createObjectStore("overrides", { keyPath: "id" });
     },
   });
 
@@ -100,6 +113,19 @@ export async function openStore(name = "purge-email", defaults: Settings = DEFAU
     putScan: async (s) => void (await db.put("kv", s, "scan")),
     getWizard: async () => ((await db.get("kv", "wizard")) as number[] | undefined) ?? [],
     putWizard: async (done) => void (await db.put("kv", done, "wizard")),
+    allOverrides: async () => new Map((await db.getAll("overrides")).map((o) => [o.id, o])),
+    async putOverrides(ids, slug, at) {
+      const tx = db.transaction("overrides", "readwrite");
+      await Promise.all([...ids.map((id) => tx.store.put({ id, slug, at })), tx.done]);
+    },
+    async putOverrideList(list) {
+      const tx = db.transaction("overrides", "readwrite");
+      await Promise.all([...list.map((o) => tx.store.put(o)), tx.done]);
+    },
+    async deleteOverrides(ids) {
+      const tx = db.transaction("overrides", "readwrite");
+      await Promise.all([...ids.map((id) => tx.store.delete(id)), tx.done]);
+    },
     async clearScanData() {
       const tx = db.transaction(["summaries", "answers", "kv"], "readwrite");
       await Promise.all([

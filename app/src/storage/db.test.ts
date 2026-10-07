@@ -79,4 +79,46 @@ describe("store", () => {
     expect((await store.allLabels()).size).toBe(0);
     expect(await store.getSummary("m1")).toEqual(summary);
   });
+
+  it("saves, reads and deletes overrides", async () => {
+    const store = await openStore(`t-${crypto.randomUUID()}`);
+    await store.putOverrides(["a", "b"], "promotion", 5);
+    await store.putOverrideList([{ id: "c", slug: null, at: 6 }]);
+    expect(await store.allOverrides()).toEqual(
+      new Map([
+        ["a", { id: "a", slug: "promotion", at: 5 }],
+        ["b", { id: "b", slug: "promotion", at: 5 }],
+        ["c", { id: "c", slug: null, at: 6 }],
+      ]),
+    );
+    await store.deleteOverrides(["a", "c"]);
+    expect([...(await store.allOverrides()).keys()]).toEqual(["b"]);
+  });
+
+  it("keeps overrides when scan data is cleared", async () => {
+    const store = await openStore(`t-${crypto.randomUUID()}`);
+    await store.putOverrides(["a"], "maybe", 1);
+    await store.clearScanData();
+    expect((await store.allOverrides()).get("a")?.slug).toBe("maybe");
+  });
+
+  it("upgrades a version 2 database without losing labels or answers", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const { openDB } = await import("idb");
+    const v2 = await openDB(name, 2, {
+      upgrade(db) {
+        db.createObjectStore("summaries", { keyPath: "id" });
+        db.createObjectStore("answers");
+        db.createObjectStore("labels", { keyPath: "id" });
+        db.createObjectStore("kv");
+      },
+    });
+    await v2.put("labels", { id: "x", label: "purge/promotion", labeledAt: 1, userRemoved: false, userChosen: false });
+    await v2.put("answers", { version: 2 }, "x");
+    v2.close();
+    const store = await openStore(name);
+    expect((await store.allLabels()).get("x")?.label).toBe("purge/promotion");
+    expect(await store.getAnswers("x")).toEqual({ version: 2 });
+    expect((await store.allOverrides()).size).toBe(0);
+  });
 });
