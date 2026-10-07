@@ -140,6 +140,28 @@ export async function getSummary(gmail: Gmail, id: string): Promise<MessageSumma
   };
 }
 
+/** Returns the ID of the user label with this name, creating it if needed. */
+export async function ensureLabel(gmail: Gmail, name: string): Promise<string> {
+  const res = await gmail.users.labels.list({ userId: "me" });
+  const existing = res.data.labels?.find((l) => l.name === name);
+  if (existing?.id) return existing.id;
+  const created = await gmail.users.labels.create({
+    userId: "me",
+    requestBody: { name, labelListVisibility: "labelShow", messageListVisibility: "show" },
+  });
+  return created.data.id!;
+}
+
+export async function addLabel(gmail: Gmail, labelId: string, ids: string[]): Promise<void> {
+  // batchModify accepts up to 1000 IDs per call.
+  for (let i = 0; i < ids.length; i += 1000) {
+    await gmail.users.messages.batchModify({
+      userId: "me",
+      requestBody: { ids: ids.slice(i, i + 1000), addLabelIds: [labelId] },
+    });
+  }
+}
+
 export async function trash(gmail: Gmail, id: string): Promise<void> {
   await gmail.users.messages.trash({ userId: "me", id });
 }

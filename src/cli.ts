@@ -1,10 +1,21 @@
 import { appendFile, readFile, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
 import pLimit from "p-limit";
-import { connect, getSummary, listIds, login, trash, type Gmail, type MessageSummary } from "./gmail.ts";
+import {
+  addLabel,
+  connect,
+  ensureLabel,
+  getSummary,
+  listIds,
+  login,
+  trash,
+  type Gmail,
+  type MessageSummary,
+} from "./gmail.ts";
 import { judge, type Judgment } from "./judge.ts";
 
 const CACHE_PATH = "reports/judgments.jsonl";
+const PURGE_LABEL = "purge";
 
 type Decision = "trash" | "keep" | "review";
 
@@ -30,7 +41,7 @@ const { positionals, values } = parseArgs({
   },
 });
 
-const [command, planPath] = positionals;
+const [command] = positionals;
 
 function decide(msg: MessageSummary, j: Judgment | null, keepAt: number, trashBelow: number): [Decision, string] {
   if (msg.labels.includes("STARRED")) return ["keep", "starred"];
@@ -118,7 +129,12 @@ async function plan(gmail: Gmail): Promise<void> {
   for (const e of entries) counts[e.decision]++;
   console.log(`\ntrash ${counts.trash} | keep ${counts.keep} | review ${counts.review}`);
   console.log(`Wrote ${jsonPath} and ${csvPath}`);
-  console.log(`Review the CSV, then: npm run apply -- ${jsonPath} --yes`);
+
+  const purgeIds = entries.filter((e) => e.decision === "trash").map((e) => e.id);
+  await addLabel(gmail, await ensureLabel(gmail, PURGE_LABEL), purgeIds);
+  console.log(`Labeled ${purgeIds.length} messages "${PURGE_LABEL}".`);
+  console.log(`Review them in Gmail with: label:${PURGE_LABEL}`);
+  console.log(`Remove the label (or star) anything you want to keep, then: npm run apply -- --yes`);
 }
 
 async function trashAll(gmail: Gmail, ids: string[]): Promise<void> {
@@ -136,11 +152,11 @@ async function trashAll(gmail: Gmail, ids: string[]): Promise<void> {
 }
 
 async function apply(gmail: Gmail): Promise<void> {
-  if (!planPath) throw new Error("Usage: npm run apply -- reports/plan-XXXX.json --yes");
-  const entries = JSON.parse(await readFile(planPath, "utf8")) as PlanEntry[];
-  const ids = entries.filter((e) => e.decision === "trash").map((e) => e.id);
+  // The Gmail label is the source of truth, so edits made while reviewing count.
+  // Starred messages are skipped as a last-minute escape hatch.
+  const ids = (await listIds(gmail, `label:${PURGE_LABEL} -is:starred`)).map((m) => m.id);
   if (!values.yes) {
-    console.log(`Would move ${ids.length} messages to Trash. Re-run with --yes to do it.`);
+    console.log(`Would move ${ids.length} messages labeled "${PURGE_LABEL}" to Trash. Re-run with --yes to do it.`);
     return;
   }
   await trashAll(gmail, ids);
@@ -170,5 +186,5 @@ switch (command) {
     await spam(await connect());
     break;
   default:
-    console.log("Commands: auth | plan [--years 10] [--limit N] | apply <plan.json> [--yes] | spam [--yes]");
+    console.log("Commands: auth | plan [--years 10] [--limit N] | apply [--yes] | spam [--yes]");
 }
