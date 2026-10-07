@@ -1,9 +1,10 @@
+import { execFile } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
-import { authenticate } from "@google-cloud/local-auth";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { google, type gmail_v1 } from "googleapis";
 
 const SCOPES = ["https://www.googleapis.com/auth/gmail.modify"];
-const CREDENTIALS_PATH = "credentials.json";
 const TOKEN_PATH = "token.json";
 
 export type Gmail = gmail_v1.Gmail;
@@ -22,20 +23,49 @@ export interface MessageSummary {
   attachmentNames: string[];
 }
 
-/** Runs the browser OAuth flow and stores a refresh token in token.json. */
+function oauthClient(redirectUri?: string) {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new Error("Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in .env");
+  }
+  return new google.auth.OAuth2(clientId, clientSecret, redirectUri);
+}
+
+/**
+ * Runs the browser OAuth flow on a loopback port and stores the refresh token
+ * in token.json. Requires a "Desktop app" OAuth client, which accepts any
+ * loopback redirect port.
+ */
 export async function login(): Promise<void> {
-  const client = await authenticate({ keyfilePath: CREDENTIALS_PATH, scopes: SCOPES });
-  const keys = JSON.parse(await readFile(CREDENTIALS_PATH, "utf8"));
-  const key = keys.installed ?? keys.web;
-  await writeFile(
-    TOKEN_PATH,
-    JSON.stringify({
-      type: "authorized_user",
-      client_id: key.client_id,
-      client_secret: key.client_secret,
-      refresh_token: client.credentials.refresh_token,
-    }),
-  );
+  const server = createServer();
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  const client = oauthClient(`http://127.0.0.1:${port}`);
+  const url = client.generateAuthUrl({ access_type: "offline", prompt: "consent", scope: SCOPES });
+
+  const code = await new Promise<string>((resolve, reject) => {
+    server.on("request", (req, res) => {
+      const params = new URL(req.url ?? "/", `http://127.0.0.1:${port}`).searchParams;
+      const code = params.get("code");
+      // Ignore stray requests such as /favicon.ico.
+      if (!code && !params.has("error")) {
+        res.statusCode = 404;
+        res.end();
+        return;
+      }
+      res.end(code ? "Authorized. You can close this tab." : `Authorization failed: ${params.get("error")}`);
+      if (code) resolve(code);
+      else reject(new Error(`OAuth error: ${params.get("error")}`));
+    });
+    console.log(`Opening browser. If it doesn't open, visit:\n${url}`);
+    execFile("open", [url]);
+  });
+  server.close();
+
+  const { tokens } = await client.getToken(code);
+  if (!tokens.refresh_token) throw new Error("Google returned no refresh token. Try again.");
+  await writeFile(TOKEN_PATH, JSON.stringify({ refresh_token: tokens.refresh_token }));
 }
 
 export async function connect(): Promise<Gmail> {
@@ -45,8 +75,9 @@ export async function connect(): Promise<Gmail> {
   } catch {
     throw new Error("No token.json. Run `npm run auth` first.");
   }
-  const auth = google.auth.fromJSON(JSON.parse(token));
-  return google.gmail({ version: "v1", auth: auth as never });
+  const auth = oauthClient();
+  auth.setCredentials(JSON.parse(token));
+  return google.gmail({ version: "v1", auth });
 }
 
 /** Lists message IDs (and their thread IDs) matching a Gmail search query. */

@@ -22,10 +22,10 @@ Messages where every keep-probability is below 0.1 are planned for Trash. Everyt
    2. Enable the **Gmail API** (APIs & Services → Library).
    3. Configure the **OAuth consent screen**: type External, then add your own Gmail address under **Test users**.
    4. Go to Credentials → Create credentials → **OAuth client ID** → Application type **Desktop app**.
-   5. Download the JSON and save it as `credentials.json` in this folder.
-4. `npm run auth` opens a browser. Approve access, and `token.json` gets saved.
+   5. Put the client ID and secret in `.env` as `GOOGLE_CLIENT_ID=...` and `GOOGLE_CLIENT_SECRET=...`.
+4. `npm run auth` opens a browser. Approve access, and the refresh token gets saved to `token.json`.
 
-`.env`, `credentials.json`, `token.json`, and `reports/` are gitignored.
+`.env`, `token.json`, and `reports/` are gitignored.
 
 ## Use
 

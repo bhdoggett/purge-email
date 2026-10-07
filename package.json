@@ -9,7 +9,6 @@
   },
   "type": "module",
   "dependencies": {
-    "@google-cloud/local-auth": "^3.0.1",
     "@typesafe-ai/sdk": "^0.6.0",
     "googleapis": "^183.0.0",
     "p-limit": "^7.3.3"
