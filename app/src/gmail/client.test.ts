@@ -118,4 +118,40 @@ describe("gmail client", () => {
     expect(fetch).toHaveBeenCalledTimes(3);
     expect(JSON.parse(fetch.mock.calls[2]![1].body).ids).toHaveLength(500);
   });
+
+  it("sends labelIds and includeSpamTrash on list requests", async () => {
+    const fetch = vi.fn().mockResolvedValue(json(200, {}));
+    await createGmail({ fetch, sleep: noSleep }).listIds("", undefined, { labelIds: ["L1"], includeSpamTrash: true });
+    const url = fetch.mock.calls[0]![0] as string;
+    expect(url).toContain("labelIds=L1");
+    expect(url).toContain("includeSpamTrash=true");
+  });
+
+  it("creates the parent label before a nested child", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(json(200, { labels: [] }))
+      .mockResolvedValueOnce(json(200, { id: "P" }))
+      .mockResolvedValueOnce(json(200, { id: "C" }));
+    expect(await createGmail({ fetch, sleep: noSleep }).ensureLabel("purge/newsletter")).toBe("C");
+    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(fetch.mock.calls[1]![1].body).name).toBe("purge");
+    expect(JSON.parse(fetch.mock.calls[2]![1].body).name).toBe("purge/newsletter");
+  });
+
+  it("creates only the child when the parent label exists", async () => {
+    const fetch = vi.fn()
+      .mockResolvedValueOnce(json(200, { labels: [{ id: "P", name: "purge" }] }))
+      .mockResolvedValueOnce(json(200, { id: "C" }));
+    expect(await createGmail({ fetch, sleep: noSleep }).ensureLabel("purge/newsletter")).toBe("C");
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(fetch.mock.calls[1]![1].body).name).toBe("purge/newsletter");
+  });
+
+  it("finds a label id without creating anything", async () => {
+    const fetch = vi.fn().mockImplementation(async () => json(200, { labels: [{ id: "L9", name: "y" }] }));
+    const gmail = createGmail({ fetch, sleep: noSleep });
+    expect(await gmail.findLabelId("x")).toBeNull();
+    expect(await gmail.findLabelId("y")).toBe("L9");
+    expect(fetch.mock.calls.every((c) => (c[1] as RequestInit).method === "GET")).toBe(true);
+  });
 });

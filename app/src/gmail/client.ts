@@ -40,10 +40,16 @@ export interface GmailOptions {
   random?: () => number;
 }
 
+export interface ListOptions {
+  labelIds?: string[];
+  includeSpamTrash?: boolean;
+}
+
 export interface Gmail {
-  listIds(q: string, limit?: number): Promise<{ id: string; threadId: string }[]>;
+  listIds(q: string, limit?: number, opts?: ListOptions): Promise<{ id: string; threadId: string }[]>;
   getSummary(id: string): Promise<Summary>;
   ensureLabel(name: string): Promise<string>;
+  findLabelId(name: string): Promise<string | null>;
   addLabel(labelId: string, ids: string[]): Promise<void>;
   removeLabel(labelId: string, ids: string[]): Promise<void>;
   trash(id: string): Promise<void>;
@@ -113,11 +119,13 @@ export function createGmail(opts: GmailOptions): Gmail {
   }
 
   return {
-    async listIds(q, limit = Infinity) {
+    async listIds(q, limit = Infinity, listOpts) {
       const out: { id: string; threadId: string }[] = [];
       let pageToken: string | undefined;
       do {
         const params = new URLSearchParams({ q, maxResults: "500" });
+        for (const id of listOpts?.labelIds ?? []) params.append("labelIds", id);
+        if (listOpts?.includeSpamTrash) params.set("includeSpamTrash", "true");
         if (pageToken) params.set("pageToken", pageToken);
         const page = await call<{ messages?: { id: string; threadId: string }[]; nextPageToken?: string }>(
           "GET",
@@ -158,14 +166,18 @@ export function createGmail(opts: GmailOptions): Gmail {
 
     async ensureLabel(name) {
       const res = await call<{ labels?: { id: string; name: string }[] }>("GET", "/labels");
-      const existing = res.labels?.find((l) => l.name === name);
-      if (existing) return existing.id;
-      const created = await call<{ id: string }>("POST", "/labels", {
-        name,
-        labelListVisibility: "labelShow",
-        messageListVisibility: "show",
-      });
-      return created.id;
+      const find = (n: string) => res.labels?.find((l) => l.name === n)?.id;
+      const create = async (n: string) =>
+        (await call<{ id: string }>("POST", "/labels", { name: n, labelListVisibility: "labelShow", messageListVisibility: "show" })).id;
+      // Gmail nests by name: make sure the parent exists before the child.
+      const slash = name.indexOf("/");
+      if (slash > 0 && !find(name.slice(0, slash))) await create(name.slice(0, slash));
+      return find(name) ?? (await create(name));
+    },
+
+    async findLabelId(name) {
+      const res = await call<{ labels?: { id: string; name: string }[] }>("GET", "/labels");
+      return res.labels?.find((l) => l.name === name)?.id ?? null;
     },
 
     addLabel: (labelId, ids) => modify(labelId, ids, "addLabelIds"),

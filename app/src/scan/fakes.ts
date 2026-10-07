@@ -16,7 +16,8 @@ export function fakeAnswers(kind: Partial<Answers["kind"]>, protect: Partial<Ans
 }
 
 export interface FakeGmail extends Gmail {
-  labeled: Set<string>;
+  /** Message id -> label names. The fake uses the label name as the label id. */
+  labelsOf: Map<string, Set<string>>;
   trashed: Set<string>;
   getSummaryCalls: number;
   failIds: Set<string>;
@@ -27,11 +28,12 @@ export interface FakeGmail extends Gmail {
   ages: Map<string, number>;
 }
 
-/** In-memory Gmail. `labeled` holds IDs carrying the app's label. */
+/** In-memory Gmail. `labelsOf` maps each message to the label names it carries. */
 export function createFakeGmail(messages: Summary[]): FakeGmail {
   const byId = new Map(messages.map((m) => [m.id, m]));
+  const created = new Set<string>();
   const fake: FakeGmail = {
-    labeled: new Set(),
+    labelsOf: new Map(),
     trashed: new Set(),
     getSummaryCalls: 0,
     failIds: new Set(),
@@ -39,11 +41,17 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
     spamIds: [],
     trashErrors: new Map(),
     ages: new Map(),
-    async listIds(q, limit = Infinity) {
+    async listIds(q, limit = Infinity, opts) {
       let ids: { id: string; threadId: string }[];
-      if (q.startsWith("in:sent")) ids = [];
+      const withLabels = (names: string[], anywhere: boolean) =>
+        [...fake.labelsOf]
+          .filter(([id, set]) => names.every((n) => set.has(n)) && (anywhere || !fake.trashed.has(id)) && !(q.includes("-is:starred") && byId.get(id)?.labels.includes("STARRED")))
+          .map(([id]) => ({ id, threadId: id }));
+      if (opts?.labelIds) ids = withLabels(opts.labelIds, opts.includeSpamTrash ?? false);
+      else if (q.startsWith("in:sent")) ids = [];
       else if (q === "in:spam") ids = fake.spamIds.map((id) => ({ id, threadId: id }));
-      else if (q.startsWith("label:")) ids = [...fake.labeled].filter((id) => (q.includes("in:anywhere") || !fake.trashed.has(id)) && !(q.includes("-is:starred") && byId.get(id)?.labels.includes("STARRED"))).map((id) => ({ id, threadId: id }));
+      // Text `label:` queries match by name until the engine switches to label ids.
+      else if (q.startsWith("label:")) ids = withLabels([/^label:(\S+)/.exec(q)![1]!], q.includes("in:anywhere"));
       else {
         const years = Number(/older_than:(\d+)y/.exec(q)?.[1] ?? 0);
         ids = messages.filter((m) => (fake.ages.get(m.id) ?? 20) >= years).map((m) => ({ id: m.id, threadId: m.threadId }));
@@ -59,14 +67,24 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
       if (fake.failIds.has(id)) throw new Error(`boom ${id}`);
       return byId.get(id)!;
     },
-    async ensureLabel() {
-      return "L1";
+    async ensureLabel(name) {
+      created.add(name);
+      return name;
     },
-    async addLabel(_label, ids) {
-      for (const id of ids) fake.labeled.add(id);
+    async findLabelId(name) {
+      if (created.has(name) || [...fake.labelsOf.values()].some((set) => set.has(name))) return name;
+      return null;
     },
-    async removeLabel(_label, ids) {
-      for (const id of ids) fake.labeled.delete(id);
+    async addLabel(label, ids) {
+      created.add(label);
+      for (const id of ids) {
+        const set = fake.labelsOf.get(id) ?? new Set<string>();
+        set.add(label);
+        fake.labelsOf.set(id, set);
+      }
+    },
+    async removeLabel(label, ids) {
+      for (const id of ids) fake.labelsOf.get(id)?.delete(label);
     },
     async trash(id) {
       const err = fake.trashErrors.get(id);
@@ -78,4 +96,9 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
     },
   };
   return fake;
+}
+
+/** Ids of messages carrying `label`, in insertion order. */
+export function idsWithLabel(fake: FakeGmail, label: string): string[] {
+  return [...fake.labelsOf].filter(([, set]) => set.has(label)).map(([id]) => id);
 }

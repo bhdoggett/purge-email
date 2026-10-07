@@ -5,7 +5,7 @@ import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
 import { openStore } from "../storage/db.ts";
 import { isRunLevelError, ScanEngine } from "./engine.ts";
-import { createFakeGmail, fakeAnswers, makeSummary } from "./fakes.ts";
+import { createFakeGmail, fakeAnswers, idsWithLabel, makeSummary } from "./fakes.ts";
 
 async function setup(messages = [makeSummary("promo"), makeSummary("mom"), makeSummary("att", { attachmentNames: ["a.pdf"] })], extra: { labelBatch?: number; concurrency?: number } = {}) {
   const store = await openStore(`t-${crypto.randomUUID()}`);
@@ -25,7 +25,7 @@ describe("ScanEngine", () => {
     const p = engine.getProgress();
     expect(p.stage).toBe("done");
     expect(p.counts).toEqual({ purge: 1, keep: 2, review: 0, failed: 0 });
-    expect([...gmail.labeled]).toEqual(["promo"]);
+    expect(idsWithLabel(gmail, "purge-test")).toEqual(["promo"]);
     expect(judge).toHaveBeenCalledTimes(2);
     expect(p.costUsd).toBeCloseTo((2 * 1000 * 0.042) / 1_000_000);
     expect((await store.allLabels()).get("promo")?.labeledByApp).toBe(true);
@@ -81,7 +81,7 @@ describe("ScanEngine", () => {
     const { gmail, engine, store } = await setup();
     await store.putLabels([{ id: "promo", labeledByApp: true, userRemoved: true }]);
     await engine.start(DEFAULT_SETTINGS);
-    expect(gmail.labeled.has("promo")).toBe(false);
+    expect(idsWithLabel(gmail, "purge-test").includes("promo")).toBe(false);
   });
 
   it("builds a new candidate list when the age setting changed since an unfinished scan", async () => {
@@ -105,8 +105,8 @@ describe("ScanEngine", () => {
 
   it("trashes labeled mail message by message, skipping starred", async () => {
     const { gmail, engine } = await setup([makeSummary("a"), makeSummary("b", { labels: ["STARRED"] })]);
-    gmail.labeled.add("a");
-    gmail.labeled.add("b");
+    gmail.labelsOf.set("a", new Set(["purge-test"]));
+    gmail.labelsOf.set("b", new Set(["purge-test"]));
     const listIds = vi.spyOn(gmail, "listIds");
     await engine.trashLabeled();
     expect(listIds).toHaveBeenCalledWith("label:purge-test -is:starred");
@@ -143,7 +143,7 @@ describe("ScanEngine", () => {
 
   it("treats a 404 on trash as done and keeps going", async () => {
     const { gmail, engine } = await setup([makeSummary("a"), makeSummary("b"), makeSummary("c")]);
-    for (const id of ["a", "b", "c"]) gmail.labeled.add(id);
+    for (const id of ["a", "b", "c"]) gmail.labelsOf.set(id, new Set(["purge-test"]));
     gmail.trashErrors.set("b", new GmailError(404, "notFound", "gone"));
     await engine.trashLabeled();
     expect([...gmail.trashed].sort()).toEqual(["a", "c"]);
@@ -155,8 +155,8 @@ describe("ScanEngine", () => {
 
   it("counts other trash errors as failed and continues", async () => {
     const { gmail, engine } = await setup([makeSummary("a"), makeSummary("b")]);
-    gmail.labeled.add("a");
-    gmail.labeled.add("b");
+    gmail.labelsOf.set("a", new Set(["purge-test"]));
+    gmail.labelsOf.set("b", new Set(["purge-test"]));
     gmail.trashErrors.set("a", new Error("nope"));
     await engine.trashLabeled();
     expect([...gmail.trashed]).toEqual(["b"]);
@@ -207,18 +207,18 @@ describe("ScanEngine", () => {
   it("removes stale labels when a rescan uses rules that no longer purge them", async () => {
     const { gmail, engine, store } = await setup();
     await engine.start(DEFAULT_SETTINGS);
-    expect([...gmail.labeled]).toEqual(["promo"]);
+    expect(idsWithLabel(gmail, "purge-test")).toEqual(["promo"]);
 
     const narrower = { ...DEFAULT_SETTINGS, purgeKinds: DEFAULT_SETTINGS.purgeKinds.filter((k) => k !== "promotion") };
     await engine.start(narrower);
     expect(engine.getProgress().stage).toBe("done");
-    expect([...gmail.labeled]).toEqual([]);
+    expect(idsWithLabel(gmail, "purge-test")).toEqual([]);
     expect((await store.getScan())?.settingsAtScan).toEqual(narrower);
     expect((await store.allLabels()).has("promo")).toBe(false);
 
     // The app removed it, not the user, so going back to the old rules labels it again.
     await engine.start(DEFAULT_SETTINGS);
-    expect([...gmail.labeled]).toEqual(["promo"]);
+    expect(idsWithLabel(gmail, "purge-test")).toEqual(["promo"]);
   });
 
   it("removes the label from an earlier-labeled email that the raised age no longer covers", async () => {
@@ -226,19 +226,19 @@ describe("ScanEngine", () => {
     gmail.ages.set("old", 15);
     gmail.ages.set("recent", 6);
     await engine.start({ ...DEFAULT_SETTINGS, years: 5 });
-    expect([...gmail.labeled].sort()).toEqual(["old", "recent"]);
+    expect(idsWithLabel(gmail, "purge-test").sort()).toEqual(["old", "recent"]);
 
     await engine.start({ ...DEFAULT_SETTINGS, years: 10 });
     expect((await store.getScan())?.candidateIds).toEqual(["old"]);
-    expect([...gmail.labeled]).toEqual(["old"]);
+    expect(idsWithLabel(gmail, "purge-test")).toEqual(["old"]);
   });
 
   it("does not re-add a label the user removed between scans", async () => {
     const { gmail, engine, store } = await setup();
     await engine.start(DEFAULT_SETTINGS);
-    gmail.labeled.delete("promo");
+    gmail.labelsOf.delete("promo");
     await engine.start(DEFAULT_SETTINGS);
-    expect(gmail.labeled.has("promo")).toBe(false);
+    expect(idsWithLabel(gmail, "purge-test").includes("promo")).toBe(false);
     expect((await store.allLabels()).get("promo")?.userRemoved).toBe(true);
   });
 
@@ -263,7 +263,7 @@ describe("ScanEngine", () => {
     const many = Array.from({ length: 40 }, (_, i) => makeSummary(`p${i}`));
     const { gmail, engine, notify } = await setup(many);
     for (const m of many) {
-      gmail.labeled.add(m.id);
+      gmail.labelsOf.set(m.id, new Set(["purge-test"]));
       gmail.trashErrors.set(m.id, new Error("nope"));
     }
     await engine.trashLabeled();
