@@ -52,7 +52,7 @@ describe("buildTableRows", () => {
   });
   it("keeps an email with a bad date when an age is set", () => {
     const r = buildTableRows(["u"], summaries, answers, new Map(), DEFAULT_SETTINGS, NOW)[0]!;
-    expect(r).toMatchObject({ label: null, decision: "keep" });
+    expect(r).toMatchObject({ label: null, decision: "keep", reason: "Kept: date unknown" });
   });
   it("marks overridden rows", () => {
     const r = rows(new Map([["m", { id: "m", slug: "social", at: 1 }]])).find((x) => x.id === "m")!;

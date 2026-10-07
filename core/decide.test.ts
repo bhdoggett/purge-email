@@ -84,8 +84,8 @@ describe("decide: age", () => {
     expect(decide(older, promo, sixMonths, NOW).decision).toBe("purge");
   });
 
-  it("keeps mail with no readable date as too new while an age is set", () => {
-    expect(decide({ ...plain, receivedAt: null }, promo, sixMonths, NOW)).toEqual({ decision: "keep", reason: "too new" });
+  it("keeps mail with no readable date while an age is set, saying the date is missing", () => {
+    expect(decide({ ...plain, receivedAt: null }, promo, sixMonths, NOW)).toEqual({ decision: "keep", reason: "no date" });
   });
 
   it("ignores the date when the age is 0 (any age)", () => {

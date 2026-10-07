@@ -111,7 +111,7 @@ Scan only judges your mail and saves the results on this computer. It doesn't to
 
 Your changes are saved on this computer, cost nothing, and don't run Jev again. They survive rescans and Settings → Clear scan data. Nothing reaches Gmail until you apply.
 
-While an age is set, mail newer than it is kept with the reason "Kept: newer than …", and so is mail whose date can't be read.
+While an age is set, mail newer than it is kept ("Kept: newer than …"), and so is mail whose date can't be read ("Kept: date unknown").
 
 Raising the age or turning on the attachment or starred checkbox after a scan needs no rescan: the scanned emails that no longer fit are kept, and Apply removes the labels the app gave them, unless you chose a label for them in Review. Lowering the age (or setting it to 0) or turning off the attachment or starred checkbox could include emails the scan never looked at, so Review and Apply ask you to rescan first.
 

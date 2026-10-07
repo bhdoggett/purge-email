@@ -66,9 +66,10 @@ export function decide(
 ): { decision: Decision; reason: string } {
   if (flags.starred && settings.keepStarred) return { decision: "keep", reason: "starred" };
   if (flags.attachmentCount > 0 && settings.keepAttachments) return { decision: "keep", reason: "attachment" };
-  // Mail with no readable date can't be shown to be old enough, so it is kept.
-  if (settings.ageMonths > 0 && (flags.receivedAt === null || flags.receivedAt > cutoff(now, settings.ageMonths))) {
-    return { decision: "keep", reason: "too new" };
+  if (settings.ageMonths > 0) {
+    // Mail with no readable date can't be shown to be old enough, so it is kept.
+    if (flags.receivedAt === null) return { decision: "keep", reason: "no date" };
+    if (flags.receivedAt > cutoff(now, settings.ageMonths)) return { decision: "keep", reason: "too new" };
   }
   if (!answers || answers.version !== QUESTIONS_VERSION) return { decision: "review", reason: "not judged" };
 

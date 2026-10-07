@@ -33,6 +33,7 @@ function keptReason(raw: string, suggested: string | null, answers: Answers | nu
   if (raw === "starred") return "Kept: starred";
   if (raw === "attachment") return "Kept: has attachments";
   if (raw === "too new") return `Kept: newer than ${ageText(settings.ageMonths)}`;
+  if (raw === "no date") return "Kept: date unknown";
   if (raw === "not judged" || !answers) return "Not judged";
   const protect = PROTECTS.find((p) => p.id === (raw.split(" ")[0] as ProtectId));
   if (protect) return `Kept: ${protect.label.toLowerCase()} ${pct(answers.protect[protect.id])}%`;

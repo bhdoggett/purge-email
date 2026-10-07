@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "@core/decide.ts";
+import { needsRescan } from "@core/labels.ts";
 import type { Answers } from "@core/questions.ts";
 import type { Summary } from "../gmail/client.ts";
 import { type LabelRecord, openStore } from "../storage/db.ts";
@@ -453,7 +454,8 @@ describe("reconcile", () => {
     const records = await store.allLabels();
     expect(records.get("news")?.labeledAt).toBe(NOW);
     expect(records.get("promo")).toEqual({ id: "promo", label: "purge/maybe", labeledAt: later, userRemoved: false, userChosen: false });
-    expect((await store.getScan())?.settingsAtScan).toEqual(settings);
+    // Apply never changes which rules the scan's candidate list covers.
+    expect((await store.getScan())?.settingsAtScan).toEqual(DEFAULT_SETTINGS);
   });
 
   it("defers a just-labeled email whose label is gone from Gmail, then marks it user-removed", async () => {
@@ -661,6 +663,17 @@ describe("previewReconcile", () => {
     await applyPreview({ gmail, store }, DEFAULT_SETTINGS, preview);
     expect(idsWithLabel(gmail, "purge/promotion")).toEqual(["a"]);
     expect((await store.allLabels()).get("a")?.label).toBe("purge/promotion");
+  });
+
+  it("leaves the scan's coverage alone when applying narrower rules", async () => {
+    const { store, gmail } = await arrange();
+    const anyAge = { ...DEFAULT_SETTINGS, ageMonths: 0 };
+    await store.putScan({ ...(await store.getScan())!, ageMonths: 0, settings: anyAge, settingsAtScan: anyAge });
+    const narrower = { ...DEFAULT_SETTINGS, ageMonths: 60 };
+    await applyPreview({ gmail, store }, narrower, await previewReconcile({ gmail, store, now: () => NOW }, narrower));
+    const scan = (await store.getScan())!;
+    expect(scan.settingsAtScan).toEqual(anyAge);
+    expect(needsRescan(scan.settingsAtScan!, anyAge)).toBe(false);
   });
 
   it("names the old prefix whose labels a rename empties", async () => {

@@ -274,8 +274,7 @@ export async function applyPreview(deps: { gmail: Gmail; store: Store }, setting
   }
   await store.putLabels(plan.put);
   await store.deleteLabels(plan.del);
-  const scan = await store.getScan();
-  if (scan) await store.putScan({ ...scan, settingsAtScan: settings });
+  // settingsAtScan records which rules the scan's candidate list covers, so only a finished scan sets it.
 }
 
 /** Brings the app's labels in Gmail in line with `settings` over the current scan's candidates. */

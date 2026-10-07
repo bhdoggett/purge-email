@@ -26,7 +26,7 @@ export interface ScanRecord {
   repliedThreadIds: string[];
   finished: boolean;
   startedAt: number;
-  /** Settings the labels currently in Gmail were computed with; null until a scan finishes. */
+  /** Rules the finished scan's candidate list covers; set only when a scan finishes, null until then. */
   settingsAtScan: Settings | null;
   /** Measured average ms per email for emails that needed Gmail and Jev calls. */
   msPerEmail: number | null;
