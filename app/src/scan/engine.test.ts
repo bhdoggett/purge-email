@@ -4,7 +4,7 @@ import { DEFAULT_SETTINGS } from "@core/decide.ts";
 import type { EmailFacts } from "@core/questions.ts";
 import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
-import { openStore } from "../storage/db.ts";
+import { openStore, type Store } from "../storage/db.ts";
 import { testKey } from "../test/key.ts";
 import { isRunLevelError, ScanEngine } from "./engine.ts";
 import { createFakeGmail, fakeAnswers, makeSummary } from "./fakes.ts";
@@ -298,8 +298,12 @@ describe("ScanEngine", () => {
       makeSummary("star", { from: "Mom <mom@x.com>", subject: "subject mom starred", labels: ["STARRED"] }),
     ];
 
+    /** Sent mail counted, so the app knows who is close. */
+    const counted = (store: Store) => store.putSenderStats({ ownAddress: "me@gmail.com", counted: [], people: [] });
+
     it("asks only personal emails from people who aren't close, labels the trivial ones, and adds the cost", async () => {
       const { engine, store, judge, judgeSignificance } = await setup(mail());
+      await counted(store);
       await store.putCloseChoices({ "mom@x.com": true });
       await engine.start(on);
       // Starred mail is judged too (it can be labeled when starred mail isn't kept), but is never asked.
@@ -314,6 +318,16 @@ describe("ScanEngine", () => {
       expect(p.costUsd).toBeCloseTo(((4 * 1000 + 500) * 0.042) / 1_000_000);
     });
 
+    it("asks nothing, keeping personal mail, until sent mail has been counted", async () => {
+      const { engine, store, judgeSignificance } = await setup(mail());
+      await engine.start(on);
+      expect(judgeSignificance).not.toHaveBeenCalled();
+      expect(engine.getProgress().recent.find((r) => r.id === "mom2")).toMatchObject({ decision: "keep", label: null, reason: "personal unchecked" });
+      await counted(store);
+      await engine.start(on);
+      expect(judgeSignificance).toHaveBeenCalledTimes(2);
+    });
+
     it("never asks when the setting is off", async () => {
       const { engine, judgeSignificance } = await setup(mail());
       await engine.start(DEFAULT_SETTINGS);
@@ -322,6 +336,7 @@ describe("ScanEngine", () => {
 
     it("asks already-judged emails without asking the main questions again, and only once", async () => {
       const { engine, store, judge, judgeSignificance } = await setup(mail());
+      await counted(store);
       await engine.start(DEFAULT_SETTINGS);
       expect(judge).toHaveBeenCalledTimes(4);
       await engine.start(on);
@@ -334,6 +349,7 @@ describe("ScanEngine", () => {
 
     it("leaves the email kept and unchecked when the question fails", async () => {
       const { engine, store, judgeSignificance } = await setup([mail()[1]!]);
+      await counted(store);
       judgeSignificance.mockRejectedValueOnce(new Error("busy"));
       await engine.start(on);
       expect((await store.getAnswers("mom2"))?.significance).toBeUndefined();
@@ -343,12 +359,14 @@ describe("ScanEngine", () => {
     });
 
     it("strips the preview when previews are off, even from a summary saved with one", async () => {
-      const { engine, judgeSignificance } = await setup([mail()[1]!]);
+      const { engine, store, judgeSignificance } = await setup([mail()[1]!]);
+      await counted(store);
       await engine.start(DEFAULT_SETTINGS);
       await engine.start({ ...on, sendPreviews: false });
       expect(judgeSignificance.mock.calls[0]![0]).toMatchObject({ snippet: "" });
 
       const sends = await setup([mail()[1]!]);
+      await counted(sends.store);
       await sends.engine.start(on);
       expect(sends.judgeSignificance.mock.calls[0]![0]).toMatchObject({ snippet: "ok thanks" });
     });

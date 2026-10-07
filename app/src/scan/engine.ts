@@ -114,6 +114,8 @@ export class ScanEngine {
       const scan = await this.loadOrCreateScan(settings, opts.limit);
       // Loaded once per run: changes to close people apply on Review and Apply without a rescan.
       const close = await loadCloseSet(store);
+      // Until Sent mail is counted, nobody is known to be close: personal mail stays unchecked (kept).
+      const closeKnown = (await store.getSenderStats()) !== null;
       const replied = new Set(scan.repliedThreadIds);
       const pace = new Pace();
       let signInExpired = false;
@@ -150,7 +152,7 @@ export class ScanEngine {
                 this.set({ costUsd: this.progress.costUsd + answers.inputTokens * JEV_USD_PER_TOKEN });
               }
               // Personal mail from someone not close gets one more question; everything else is never asked.
-              if (answers && needsSignificance(flagsOf(summary, close), answers, settings, this.now())) {
+              if (answers && closeKnown && needsSignificance(flagsOf(summary, close), answers, settings, this.now())) {
                 const s = await judgeSignificance(facts);
                 answers = { ...answers, significance: s.meaningful };
                 await store.putAnswers(id, answers);
