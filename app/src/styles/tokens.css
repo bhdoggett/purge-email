@@ -64,8 +64,9 @@
   --duration: 160ms;
 }
 
+/* Dark tokens: follow the system unless the header toggle chose light; or the toggle chose dark. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --color-bg: #14181b;
     --color-surface: #1c2226;
     --color-text: #e6ebed;
@@ -79,4 +80,24 @@
     --color-danger: #ee8a76;
     --color-focus: #7cc6d3;
   }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #14181b;
+  --color-surface: #1c2226;
+  --color-text: #e6ebed;
+  --color-muted: #9aa8b0;
+  --color-border: #2f3a40;
+  --color-accent: #5fb3c1;
+  --color-accent-text: #0e1417;
+  --color-purge: #e0806a;
+  --color-keep: #6cc095;
+  --color-review: #d8a84a;
+  --color-danger: #ee8a76;
+  --color-focus: #7cc6d3;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
 }
