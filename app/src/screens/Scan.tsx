@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Screen, WizardTarget } from "../App.tsx";
 import { Button } from "../components/Button.tsx";
 import { Feed } from "../components/Feed.tsx";
+import { RateLimitNote } from "../components/RateLimitNote.tsx";
 import { ProgressBar } from "../components/ProgressBar.tsx";
 import { formatDuration, formatUsd } from "../format.ts";
 import { scanCounts } from "../scan/reconcile.ts";
@@ -10,17 +11,6 @@ import type { Services } from "../services.ts";
 import { useProgress } from "../useProgress.ts";
 import { errorToStep } from "../wizard/errorToStep.ts";
 import styles from "./Scan.module.css";
-
-function useNow(active: boolean) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    if (!active) return;
-    // Tick faster than once a second so the countdown never skips or lingers on a second.
-    const t = setInterval(() => setNow(Date.now()), 250);
-    return () => clearInterval(t);
-  }, [active]);
-  return now;
-}
 
 const STAGE_COPY: Record<string, string> = {
   finding: "Finding emails to purge…",
@@ -32,8 +22,6 @@ const STAGE_COPY: Record<string, string> = {
 
 export function Scan({ services, go, openWizard }: { services: Services; go: (s: Screen) => void; openWizard: (t: WizardTarget) => void }) {
   const p = useProgress(services.engine);
-  const now = useNow(p.rateLimitUntil !== null);
-  const waiting = p.rateLimitUntil !== null && p.rateLimitUntil > now;
   const running = services.engine.isBusy();
   const stage = p.stage === "judging" ? `Reading and judging ${p.done.toLocaleString()} of ${p.total.toLocaleString()}` : (STAGE_COPY[p.stage] ?? "");
   const mapped = p.error ? errorToStep(p.error) : null;
@@ -112,8 +100,8 @@ export function Scan({ services, go, openWizard }: { services: Services; go: (s:
       <ProgressBar value={p.total ? p.done / p.total : 0} label="Scan progress" />
       <p className={styles.eta}>
         {p.etaMs !== null && running ? `About ${formatDuration(p.etaMs)} left` : " "}
-        {waiting && ` · Gmail asked us to slow down. Continuing in ${Math.ceil((p.rateLimitUntil! - now) / 1000)}s.`}
       </p>
+      <RateLimitNote className={styles.eta} />
 
       {p.job === "scan" && (
         <dl className={styles.counts}>

@@ -169,13 +169,27 @@ export interface GmailLabelState {
   live: Set<string>;
 }
 
+/** Which label `readGmailState` is starting to read: `index` counts from 1 out of `total`. */
+export interface ReadStep {
+  index: number;
+  total: number;
+  label: string;
+}
+
 /** Reads which app labels (current prefix plus any recorded) are on which messages in Gmail. */
-export async function readGmailState(gmail: Gmail, settings: Settings, records: Map<string, LabelRecord>): Promise<GmailLabelState> {
+export async function readGmailState(
+  gmail: Gmail,
+  settings: Settings,
+  records: Map<string, LabelRecord>,
+  onStep?: (step: ReadStep) => void,
+): Promise<GmailLabelState> {
   const names = new Set([...appLabelNames(settings.labelPrefix), ...[...records.values()].map((r) => r.label)]);
   const labelIds = new Map<string, string>();
   const labelsOn = new Map<string, string[]>();
   const live = new Set<string>();
+  let index = 0;
   for (const name of names) {
+    onStep?.({ index: ++index, total: names.size, label: name });
     const labelId = await gmail.findLabelId(name);
     if (labelId === null) continue;
     labelIds.set(name, labelId);
@@ -219,14 +233,14 @@ export function labelTotalsAfter(live: Set<string>, anywhere: Map<string, string
  * Works out what `reconcile` would change in Gmail, without writing anything.
  * `added` and `removed` count ids that only gained or only lost a label; `moved` counts ids that did both.
  */
-export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?: () => number }, settings: Settings): Promise<Preview> {
+export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?: () => number }, settings: Settings, opts?: { onStep?: (step: ReadStep) => void }): Promise<Preview> {
   const { gmail, store } = deps;
   const now = (deps.now ?? Date.now)();
   const scan = await store.getScan();
   // Without a finished scan there are no candidates, so a plan would strip every app label.
   if (!scan?.finished || !scan.settingsAtScan) throw new AppError({ kind: "Invalid", detail: "Scan your mail first." });
   const records = await store.allLabels();
-  const state = await readGmailState(gmail, settings, records);
+  const state = await readGmailState(gmail, settings, records, opts?.onStep);
 
   const plan = planReconcile({
     now,
@@ -262,24 +276,56 @@ export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?:
   };
 }
 
-/** Writes a previewed plan to Gmail and the store. */
-export async function applyPreview(deps: { gmail: Gmail; store: Store }, preview: Preview): Promise<void> {
+/** Gmail changes this many ids per call (the client batches the same way). */
+const BATCH = 1000;
+
+function chunks<T>(list: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+
+/** Writes a previewed plan to Gmail and the store. `onProgress` counts label operations (one per email per add or remove). */
+export async function applyPreview(
+  deps: { gmail: Gmail; store: Store },
+  preview: Preview,
+  opts?: { onProgress?: (done: number, total: number) => void },
+): Promise<void> {
   const { gmail, store } = deps;
   const { plan } = preview;
+  const sum = (m: Map<string, string[]>) => [...m.values()].reduce((n, ids) => n + ids.length, 0);
+  const total = sum(plan.add) + sum(plan.remove);
+  let done = 0;
+  opts?.onProgress?.(0, total);
+  const step = (n: number) => {
+    done += n;
+    opts?.onProgress?.(done, total);
+  };
   // Add before remove: if this stops halfway, an email has two labels rather than none.
   for (const [name, ids] of plan.add) {
     const labelId = await gmail.ensureLabel(name).catch((err: unknown) => {
       throw asLabelNameError(err);
     });
-    await gmail.addLabel(labelId, ids);
+    for (const chunk of chunks(ids, BATCH)) {
+      await gmail.addLabel(labelId, chunk);
+      step(chunk.length);
+    }
   }
   for (const [name, ids] of plan.remove) {
     // A label the user deleted from Gmail is already off every email.
     const labelId = preview.gmail.labelIds.get(name);
-    if (labelId !== undefined) await gmail.removeLabel(labelId, ids);
+    if (labelId === undefined) {
+      step(ids.length);
+      continue;
+    }
+    for (const chunk of chunks(ids, BATCH)) {
+      await gmail.removeLabel(labelId, chunk);
+      step(chunk.length);
+    }
   }
   await store.putLabels(plan.put);
   await store.deleteLabels(plan.del);
+  // The last batch already reported the total.
   // settingsAtScan records which rules the scan's candidate list covers, so only a finished scan sets it.
 }
 

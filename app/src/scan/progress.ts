@@ -20,7 +20,6 @@ export interface Progress {
   /** `maybe` counts the review decisions that got the maybe label; they are also in `review`. */
   counts: { purge: number; keep: number; review: number; maybe: number; failed: number };
   recent: FeedItem[];
-  rateLimitUntil: number | null;
   costUsd: number;
   etaMs: number | null;
   error: unknown;
@@ -33,7 +32,6 @@ export const INITIAL_PROGRESS: Progress = {
   total: 0,
   counts: { purge: 0, keep: 0, review: 0, maybe: 0, failed: 0 },
   recent: [],
-  rateLimitUntil: null,
   costUsd: 0,
   etaMs: null,
   error: null,

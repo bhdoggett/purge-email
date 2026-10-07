@@ -3,9 +3,12 @@ import { useEffect, useRef, useState } from "react";
 import type { Settings } from "@core/decide.ts";
 import { needsRescan } from "@core/labels.ts";
 import type { Screen } from "../App.tsx";
+import { applyProgress, useApplyProgress } from "../applyProgress.ts";
 import { Button } from "../components/Button.tsx";
+import { ProgressBar } from "../components/ProgressBar.tsx";
+import { RateLimitNote } from "../components/RateLimitNote.tsx";
 import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
-import { applyPreview, countByLabel, isPending, type Preview, previewReconcile } from "../scan/reconcile.ts";
+import { applyPreview, countByLabel, isPending, type Preview, previewReconcile, type ReadStep } from "../scan/reconcile.ts";
 import type { Services } from "../services.ts";
 import { appliedMessage, type ApplyRow, buildRows, gmailLabelUrl, previewSummary, SETTLING_NOTE, totalOf } from "./applyModel.ts";
 import { useProgress } from "../useProgress.ts";
@@ -17,6 +20,12 @@ type Loaded =
   | { kind: "pending"; settings: Settings; preview: Preview }
   | { kind: "done"; settings: Settings; rows: ApplyRow[]; deferred: number };
 
+/** "Checking Gmail: label 3 of 9 (promotion)…" with just the slug of the label's name. */
+function stepText(step: ReadStep | null): string {
+  if (!step) return "Checking Gmail…";
+  return `Checking Gmail: label ${step.index} of ${step.total} (${step.label.slice(step.label.lastIndexOf("/") + 1)})…`;
+}
+
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
@@ -27,6 +36,9 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
+  // The label Gmail is being read for right now, while checking.
+  const [step, setStep] = useState<ReadStep | null>(null);
+  const writing = useApplyProgress();
   // Re-render when a scan starts or stops, so the buttons stay current.
   const progress = useProgress(engine);
   const scanning = engine.isBusy();
@@ -48,7 +60,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         setData({ kind: "rescan", settings });
       } else {
         setData(null);
-        const preview = await previewReconcile({ gmail, store }, settings);
+        const preview = await previewReconcile({ gmail, store }, settings, { onStep: setStep });
         if (isPending(preview)) {
           setData({ kind: "pending", settings, preview });
         } else {
@@ -64,6 +76,8 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
       setError(null);
     } catch (e) {
       setError(`Could not check Gmail. ${errorText(e)}`);
+    } finally {
+      setStep(null);
     }
   }
 
@@ -83,7 +97,8 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
     setError(null);
     try {
       // The shown plan was stamped when the screen opened: plan again so the records carry the time of this Apply.
-      const fresh = await previewReconcile({ gmail, store }, data.settings);
+      const fresh = await previewReconcile({ gmail, store }, data.settings, { onStep: setStep });
+      setStep(null);
       if (!isPending(fresh)) {
         await load();
         return;
@@ -93,12 +108,17 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         setMessage("Gmail changed since this screen opened. Check the new numbers, then apply.");
         return;
       }
-      await applyPreview({ gmail, store }, fresh);
+      try {
+        await applyPreview({ gmail, store }, fresh, { onProgress: (done, total) => applyProgress.set({ done, total }) });
+      } finally {
+        applyProgress.set(null);
+      }
       setMessage(appliedMessage(fresh, fresh.oldPrefixes));
       await load();
     } catch (e) {
       setError(`Could not apply the labels. ${errorText(e)}`);
     } finally {
+      setStep(null);
       setApplying(false);
     }
   }
@@ -114,6 +134,19 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
     go("scan");
   }
 
+  if (writing) {
+    return (
+      <section className={styles.review}>
+        <h1 className={styles.heading} aria-live="polite">Applying labels</h1>
+        <ProgressBar value={writing.total ? writing.done / writing.total : 0} label="Apply progress" />
+        <p className={styles.muted}>
+          Labeling {writing.done.toLocaleString()} of {writing.total.toLocaleString()}
+        </p>
+        <RateLimitNote className={styles.muted} />
+      </section>
+    );
+  }
+
   if (!data) {
     return error ? (
       <section className={styles.review}>
@@ -121,7 +154,10 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         <Button onClick={() => void load()}>Try again</Button>
       </section>
     ) : (
-      <p className={styles.loading}>Checking Gmail…</p>
+      <section className={styles.review}>
+        <p className={styles.loading}>{stepText(step)}</p>
+        <RateLimitNote className={styles.muted} />
+      </section>
     );
   }
 
@@ -172,6 +208,8 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
             {applying ? "Applying labels…" : "Apply labels"}
           </Button>
         </div>
+        {applying && <p className={styles.muted}>{stepText(step)}</p>}
+        <RateLimitNote className={styles.muted} />
         {message && <p role="status">{message}</p>}
         {error && <p className={styles.error} role="alert">{error}</p>}
       </section>

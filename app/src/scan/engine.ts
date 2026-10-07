@@ -69,11 +69,6 @@ export class ScanEngine {
     this.stopRequested = true;
   }
 
-  /** When Gmail's shared rate-limit pause ends, or null once requests get through again. */
-  noteRateLimit(until: number | null): void {
-    this.set({ rateLimitUntil: until });
-  }
-
   private set(patch: Partial<Progress>): void {
     this.progress = { ...this.progress, ...patch };
     for (const fn of this.listeners) fn();
@@ -178,7 +173,6 @@ export class ScanEngine {
               },
               recent: [{ id, from: summary.from, subject: summary.subject, decision, reason, label }, ...this.progress.recent].slice(0, FEED_SIZE),
               etaMs: msPer === null ? null : msPer * (scan.candidateIds.length - done),
-              rateLimitUntil: this.progress.rateLimitUntil && this.progress.rateLimitUntil > this.now() ? this.progress.rateLimitUntil : null,
             });
           }),
         ),
@@ -196,7 +190,7 @@ export class ScanEngine {
         this.set({ stage: "paused", etaMs: null });
       } else {
         await store.putScan({ ...scan, finished: true, settingsAtScan: settings, msPerEmail });
-        this.set({ stage: "done", etaMs: null, rateLimitUntil: null });
+        this.set({ stage: "done", etaMs: null });
         const { purge, maybe } = this.progress.counts;
         this.deps.notify?.("Scan finished", `${purge} to purge and ${maybe} to check. Review them, then apply labels.`);
       }

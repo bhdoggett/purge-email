@@ -7,7 +7,8 @@ import { type LabelRecord, openStore } from "../storage/db.ts";
 import { createFakeGmail, fakeAnswers, idsWithLabel, makeSummary } from "./fakes.ts";
 import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
-import { applyPreview, countByLabel, scanCounts, isPending, labelTotalsAfter, planReconcile, prefixInUseByUser, previewReconcile, type ReconcileInput, reconcile, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
+import { appLabelNames } from "@core/labels.ts";
+import { applyPreview, countByLabel, readGmailState, scanCounts, isPending, labelTotalsAfter, planReconcile, prefixInUseByUser, previewReconcile, type ReconcileInput, reconcile, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
 
 /** A real date, so mail dated 2014 (the makeSummary default) is old enough for the default age. */
 const NOW = new Date(2026, 9, 7, 12).getTime();
@@ -758,5 +759,81 @@ describe("previewReconcile", () => {
     const later = await previewReconcile({ gmail, store, now: () => NOW + USER_CHANGE_GRACE_MS }, DEFAULT_SETTINGS);
     expect(later.plan.add.size).toBe(0);
     expect(later.plan.userRemoved).toBe(1);
+  });
+});
+
+describe("progress reporting", () => {
+  async function arrange(ids: string[]) {
+    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const msgs = ids.map((id) => makeSummary(id));
+    const gmail = createFakeGmail(msgs);
+    for (const m of msgs) {
+      await store.putSummary(m);
+      await store.putAnswers(m.id, fakeAnswers({ promotion: 0.97 }));
+    }
+    await store.putScan({ ageMonths: 120, candidateIds: ids, repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: null });
+    return { store, gmail };
+  }
+
+  it("reports each label as readGmailState starts reading it", async () => {
+    const gmail = createFakeGmail([]);
+    const steps: { index: number; total: number; label: string }[] = [];
+    await readGmailState(gmail, DEFAULT_SETTINGS, new Map(), (s) => steps.push(s));
+    const names = appLabelNames(DEFAULT_SETTINGS.labelPrefix);
+    expect(steps.map((s) => s.label)).toEqual(names);
+    expect(steps.map((s) => s.index)).toEqual(names.map((_, i) => i + 1));
+    expect(new Set(steps.map((s) => s.total))).toEqual(new Set([names.length]));
+  });
+
+  it("counts recorded labels outside the current prefix in the total", async () => {
+    const gmail = createFakeGmail([]);
+    const steps: { index: number; total: number; label: string }[] = [];
+    await readGmailState(gmail, DEFAULT_SETTINGS, new Map([["a", rec("a", "old/newsletter")]]), (s) => steps.push(s));
+    const total = appLabelNames(DEFAULT_SETTINGS.labelPrefix).length + 1;
+    expect(steps).toHaveLength(total);
+    expect(steps.at(-1)).toEqual({ index: total, total, label: "old/newsletter" });
+  });
+
+  it("passes onStep through previewReconcile", async () => {
+    const { store, gmail } = await arrange(["a"]);
+    const steps: number[] = [];
+    await previewReconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS, { onStep: (s) => steps.push(s.index) });
+    expect(steps).toEqual(appLabelNames(DEFAULT_SETTINGS.labelPrefix).map((_, i) => i + 1));
+  });
+
+  it("reports apply progress from 0 to total, once per batch of up to 1000 ids", async () => {
+    const ids = Array.from({ length: 2500 }, (_, i) => `m${i}`);
+    const { store, gmail } = await arrange(ids);
+    const preview = await previewReconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);
+    const addLabel = vi.spyOn(gmail, "addLabel");
+    const calls: [number, number][] = [];
+    await applyPreview({ gmail, store }, preview, { onProgress: (done, total) => calls.push([done, total]) });
+    expect(calls).toEqual([[0, 2500], [1000, 2500], [2000, 2500], [2500, 2500]]);
+    expect(addLabel.mock.calls.map(([, chunk]) => chunk.length)).toEqual([1000, 1000, 500]);
+    expect(idsWithLabel(gmail, "purge/promotion")).toHaveLength(2500);
+  });
+
+  it("counts adds and removes together and does all adds first", async () => {
+    const { store, gmail } = await arrange(["a", "b"]);
+    const oldId = await gmail.ensureLabel("purge/newsletter");
+    await gmail.addLabel(oldId, ["a"]);
+    await store.putLabels([rec("a", "purge/newsletter")]);
+    const preview = await previewReconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);
+    const order: string[] = [];
+    vi.spyOn(gmail, "addLabel").mockImplementation(async () => void order.push("add"));
+    vi.spyOn(gmail, "removeLabel").mockImplementation(async () => void order.push("remove"));
+    const calls: [number, number][] = [];
+    await applyPreview({ gmail, store }, preview, { onProgress: (d, t) => calls.push([d, t]) });
+    expect(order).toEqual(["add", "remove"]);
+    expect(calls).toEqual([[0, 3], [2, 3], [3, 3]]);
+  });
+
+  it("reports (0, 0) when there is nothing to write", async () => {
+    const { store, gmail } = await arrange([]);
+    const preview = await previewReconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);
+    const calls: [number, number][] = [];
+    await applyPreview({ gmail, store }, preview, { onProgress: (d, t) => calls.push([d, t]) });
+    expect(calls[0]).toEqual([0, 0]);
+    expect(calls.at(-1)).toEqual([0, 0]);
   });
 });

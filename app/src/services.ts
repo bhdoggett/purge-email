@@ -2,6 +2,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { proxyFetch } from "./bridge/proxyFetch.ts";
 import { createGmail, type Gmail } from "./gmail/client.ts";
 import { createJudge } from "./jev/client.ts";
+import { rateLimit } from "./rateLimit.ts";
 import { ScanEngine } from "./scan/engine.ts";
 import { DEFAULT_SETTINGS } from "@core/decide.ts";
 import { openStore, type Store } from "./storage/db.ts";
@@ -30,9 +31,8 @@ let services: Promise<Services> | null = null;
 export function getServices(): Promise<Services> {
   services ??= (async () => {
     const store = await openStore(undefined, { ...DEFAULT_SETTINGS, labelPrefix: DEFAULT_PREFIX });
-    let engine: ScanEngine | undefined;
-    const gmail = createGmail({ fetch: proxyFetch, onRateLimit: (until) => engine?.noteRateLimit(until) });
-    engine = new ScanEngine({ gmail, judge: createJudge(), store, notify: (t, b) => void notify(t, b) });
+    const gmail = createGmail({ fetch: proxyFetch, onRateLimit: (until) => rateLimit.set(until) });
+    const engine = new ScanEngine({ gmail, judge: createJudge(), store, notify: (t, b) => void notify(t, b) });
     return { store, gmail, engine };
   })();
   services.catch(() => {
