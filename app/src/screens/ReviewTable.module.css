@@ -99,3 +99,9 @@
     display: none;
   }
 }
+
+.clip {
+  color: var(--color-muted);
+  vertical-align: -2px;
+  margin-right: var(--space-1);
+}

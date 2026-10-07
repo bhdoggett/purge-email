@@ -105,7 +105,7 @@ Email bodies and attachments are never sent to Jev. The scan runs in the backgro
 
 Scan only judges your mail and saves the results on this computer. It doesn't touch Gmail, so no labels appear there during a scan. Review shows every scanned email in a table with its sender, subject, date, label and Jev's reason.
 
-- **Filter** by decision (Purge, Maybe, Keep, or Changed by you), by category, by text in the sender or subject, or by age ("Older than" a number of months or years; empty means any age). The age filter leaves out emails whose date can't be read.
+- **Filter** by decision (Purge, Maybe, Keep, or Changed by you), by category, by attachments (with or without), by text in the sender, subject or attachment file names, or by age ("Older than" a number of months or years; empty means any age). The age filter leaves out emails whose date can't be read. Rows with attachments show a paperclip; hover the subject to see the file names. Emails with attachments only appear when "Emails with attachments" is unchecked under Always keep on the Rules screen, since protected ones aren't scanned.
 - **Select** rows with a click, Cmd-click to add or remove one, Shift-click for a range, or Cmd-A for every row the filters show.
 - **Change** the selected emails with **Use suggested label**, **Move to** a label, **Maybe**, **Keep (no label)**, or **Undo my change**.
 

@@ -14,6 +14,7 @@ import {
   buildTableRows,
   type DecisionFilter,
   EMPTY_SELECTION,
+  type AttachmentFilter,
   type Filters,
   filterRows,
   NO_FILTERS,
@@ -237,11 +238,16 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
             <option key={k.slug} value={k.slug}>{k.label}</option>
           ))}
         </select>
+        <select className={styles.control} aria-label="Attachments" value={filters.attachments} onChange={(e) => changeFilters({ attachments: e.target.value as AttachmentFilter })}>
+          <option value="all">With or without attachments</option>
+          <option value="with">With attachments</option>
+          <option value="without">Without attachments</option>
+        </select>
         <input
           type="search"
           className={`${styles.control} ${styles.search}`}
-          placeholder="Search sender or subject"
-          aria-label="Search sender or subject"
+          placeholder="Search sender, subject or file name"
+          aria-label="Search sender, subject or file name"
           value={filters.text}
           onChange={(e) => changeFilters({ text: e.target.value })}
         />

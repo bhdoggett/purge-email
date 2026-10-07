@@ -175,3 +175,32 @@ describe("pruneSelection", () => {
     expect(EMPTY_SELECTION.ids.size).toBe(0);
   });
 });
+
+describe("attachments in Review", () => {
+  const withFiles = new Map([
+    ["inv", makeSummary("inv", { from: "Shop", subject: "Your order", attachmentNames: ["invoice-2014.pdf"] })],
+    ["pic", makeSummary("pic", { from: "Aunt", subject: "Photos", attachmentNames: ["beach.JPG", "dog.jpg"] })],
+    ["none", makeSummary("none", { from: "News", subject: "Weekly" })],
+  ]);
+  const judged = new Map([...withFiles.keys()].map((id) => [id, fakeAnswers({ promotion: 0.97 })]));
+  const settings = { ...DEFAULT_SETTINGS, ageMonths: 0, keepAttachments: false };
+  const all = buildTableRows([...withFiles.keys()], withFiles, judged, new Map(), settings, NOW);
+  const ids = (f: Partial<typeof NO_FILTERS>) => filterRows(all, { ...NO_FILTERS, ...f }, NOW).map((r) => r.id).sort();
+
+  it("carries each email's attachment names on its row", () => {
+    expect(all.find((r) => r.id === "pic")!.attachmentNames).toEqual(["beach.JPG", "dog.jpg"]);
+    expect(all.find((r) => r.id === "none")!.attachmentNames).toEqual([]);
+  });
+  it("filters to emails with or without attachments", () => {
+    expect(ids({ attachments: "with" })).toEqual(["inv", "pic"]);
+    expect(ids({ attachments: "without" })).toEqual(["none"]);
+    expect(ids({ attachments: "all" })).toEqual(["inv", "none", "pic"]);
+  });
+  it("matches search text in attachment names, ignoring case", () => {
+    expect(ids({ text: "invoice" })).toEqual(["inv"]);
+    expect(ids({ text: ".jpg" })).toEqual(["pic"]);
+  });
+  it("combines the attachments filter with the others", () => {
+    expect(ids({ attachments: "with", text: "aunt" })).toEqual(["pic"]);
+  });
+});

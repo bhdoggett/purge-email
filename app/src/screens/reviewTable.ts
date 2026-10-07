@@ -20,6 +20,8 @@ export interface TableRow {
   decision: Decision;
   overridden: boolean;
   reason: string;
+  /** File names of the email's attachments; empty when it has none. */
+  attachmentNames: string[];
 }
 
 const pct = (p: number) => Math.round(p * 100);
@@ -67,7 +69,7 @@ export function buildTableRows(ids: string[], summaries: Map<string, Summary>, a
     const slug = eff.label === null ? null : slugOfLabel(eff.label, settings.labelPrefix);
     const suggested = suggestedSlug(a);
     const reason = override ? "Changed by you" : eff.label === null ? keptReason(eff.reason, suggested, a, settings) : labelReason(slug, a, settings);
-    rows.push({ id, from: summary.from, subject: summary.subject, date: Date.parse(summary.date), label: eff.label, slug, suggested, decision: eff.decision, overridden: override !== undefined, reason });
+    rows.push({ id, from: summary.from, subject: summary.subject, date: Date.parse(summary.date), label: eff.label, slug, suggested, decision: eff.decision, overridden: override !== undefined, reason, attachmentNames: summary.attachmentNames });
   }
   return rows.sort((x, y) => {
     const xn = Number.isNaN(x.date);
@@ -79,14 +81,16 @@ export function buildTableRows(ids: string[], summaries: Map<string, Summary>, a
 }
 
 export type DecisionFilter = "all" | "purge" | "maybe" | "keep" | "changed";
+export type AttachmentFilter = "all" | "with" | "without";
 export interface Filters {
   decision: DecisionFilter;
   slug: string | "all";
   text: string;
   /** Show only emails at least this many months old; 0 is off. */
   olderThanMonths: number;
+  attachments: AttachmentFilter;
 }
-export const NO_FILTERS: Filters = { decision: "all", slug: "all", text: "", olderThanMonths: 0 };
+export const NO_FILTERS: Filters = { decision: "all", slug: "all", text: "", olderThanMonths: 0, attachments: "all" };
 
 function inBucket(r: TableRow, d: DecisionFilter): boolean {
   switch (d) {
@@ -111,7 +115,13 @@ export function filterRows(rows: TableRow[], f: Filters, now: number): TableRow[
     // NaN dates fail this comparison, so an email with no readable date is left out while the filter is on.
     if (before !== null && !(r.date <= before)) return false;
     if (f.slug !== "all" && (r.label === null ? r.suggested : r.slug) !== f.slug) return false;
-    return text === "" || r.from.toLowerCase().includes(text) || r.subject.toLowerCase().includes(text);
+    if (f.attachments !== "all" && (r.attachmentNames.length > 0) !== (f.attachments === "with")) return false;
+    return (
+      text === "" ||
+      r.from.toLowerCase().includes(text) ||
+      r.subject.toLowerCase().includes(text) ||
+      r.attachmentNames.some((n) => n.toLowerCase().includes(text))
+    );
   });
 }
 

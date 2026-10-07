@@ -14,6 +14,18 @@ function formatDate(ms: number): string {
   return Number.isNaN(ms) ? "—" : new Date(ms).toLocaleDateString(undefined, { year: "numeric", month: "short" });
 }
 
+function attachmentTitle(row: TableRow): string {
+  return row.attachmentNames.length > 0 ? `${row.subject}\nAttachments: ${row.attachmentNames.join(", ")}` : row.subject;
+}
+
+function PaperClip() {
+  return (
+    <svg className={styles.clip} viewBox="0 0 16 16" width="14" height="14" role="img" aria-label="Has attachments">
+      <path d="M10.5 4.5 5.8 9.2a1.4 1.4 0 0 0 2 2l5-5a2.8 2.8 0 0 0-4-4l-5.2 5.2a4.2 4.2 0 0 0 6 6L14 8.9" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function LabelCell({ row }: { row: TableRow }) {
   return (
     <>
@@ -123,7 +135,10 @@ export function ReviewTable({ rows, selection, onSelectionChange }: Props) {
                       />
                     </span>
                     <span className={`${styles.cell} ${styles.from}`} role="gridcell" title={row.from}>{row.from}</span>
-                    <span className={styles.cell} role="gridcell" title={row.subject}>{row.subject}</span>
+                    <span className={styles.cell} role="gridcell" title={attachmentTitle(row)}>
+                      {row.attachmentNames.length > 0 && <PaperClip />}
+                      {row.subject}
+                    </span>
                     <span className={`${styles.cell} ${styles.date}`} role="gridcell">{formatDate(row.date)}</span>
                     <span className={styles.cell} role="gridcell"><LabelCell row={row} /></span>
                     <span className={`${styles.cell} ${styles.reason} ${styles.muted}`} role="gridcell" title={row.reason}>{row.reason}</span>
