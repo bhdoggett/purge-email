@@ -43,20 +43,6 @@ export function asLabelNameError(err: unknown): unknown {
   return err;
 }
 
-export function settingsEqual(a: Settings, b: Settings): boolean {
-  // Record<keyof Settings, …> makes a new Settings field a type error here until it is compared.
-  const norm = (s: Settings): Record<keyof Settings, unknown> => ({
-    purgeKinds: [...s.purgeKinds].sort(),
-    protects: [...s.protects].sort(),
-    years: s.years,
-    strictness: s.strictness,
-    labelPrefix: s.labelPrefix,
-    keepAttachments: s.keepAttachments,
-    keepStarred: s.keepStarred,
-  });
-  return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
-}
-
 export async function summarize(store: Store, settings: Settings): Promise<{ purge: number; keep: number; review: number }> {
   const scan = await store.getScan();
   const summaries = await store.allSummaries();
@@ -231,13 +217,15 @@ export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?:
   const { gmail, store } = deps;
   const now = (deps.now ?? Date.now)();
   const scan = await store.getScan();
+  // Without a finished scan there are no candidates, so a plan would strip every app label.
+  if (!scan?.finished || !scan.settingsAtScan) throw new AppError({ kind: "Invalid", detail: "Scan your mail first." });
   const records = await store.allLabels();
   const state = await readGmailState(gmail, settings, records);
 
   const plan = planReconcile({
     now,
     settings,
-    candidates: scan?.candidateIds ?? [],
+    candidates: scan.candidateIds,
     summaries: await store.allSummaries(),
     answers: await store.allAnswers(),
     records,
@@ -250,7 +238,12 @@ export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?:
   const removed = new Set([...plan.remove.values()].flat());
   const moved = [...added].filter((id) => removed.has(id)).length;
   const oldPrefixes = [
-    ...new Set([...plan.remove.keys()].map((name) => name.slice(0, name.lastIndexOf("/"))).filter((prefix) => prefix !== settings.labelPrefix)),
+    ...new Set(
+      [...plan.remove.keys()]
+        .filter((name) => name.includes("/"))
+        .map((name) => name.slice(0, name.lastIndexOf("/")))
+        .filter((prefix) => prefix !== settings.labelPrefix),
+    ),
   ];
   return {
     plan,
@@ -282,7 +275,7 @@ export async function applyPreview(deps: { gmail: Gmail; store: Store }, setting
   await store.putLabels(plan.put);
   await store.deleteLabels(plan.del);
   const scan = await store.getScan();
-  if (scan) await store.putScan({ ...scan, settingsAtScan: settings, deferred: plan.deferred });
+  if (scan) await store.putScan({ ...scan, settingsAtScan: settings });
 }
 
 /** Brings the app's labels in Gmail in line with `settings` over the current scan's candidates. */

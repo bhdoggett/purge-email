@@ -6,7 +6,7 @@ import { type LabelRecord, openStore } from "../storage/db.ts";
 import { createFakeGmail, fakeAnswers, idsWithLabel, makeSummary } from "./fakes.ts";
 import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
-import { applyPreview, countByLabel, labelTotalsAfter, planReconcile, prefixInUseByUser, previewReconcile, type ReconcileInput, reconcile, settingsEqual, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
+import { applyPreview, countByLabel, isPending, labelTotalsAfter, planReconcile, prefixInUseByUser, previewReconcile, type ReconcileInput, reconcile, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
 
 const NOW = 10_000_000;
 const OLD = NOW - USER_CHANGE_GRACE_MS;
@@ -410,7 +410,7 @@ describe("reconcile", () => {
     expect((await store.getScan())?.settingsAtScan).toEqual(settings);
   });
 
-  it("defers a just-labeled email whose label is gone from Gmail, saves the count, then marks it user-removed", async () => {
+  it("defers a just-labeled email whose label is gone from Gmail, then marks it user-removed", async () => {
     const store = await openStore(`t-${crypto.randomUUID()}`);
     const gmail = createFakeGmail([makeSummary("a")]);
     await store.putSummary(makeSummary("a"));
@@ -426,18 +426,17 @@ describe("reconcile", () => {
     expect(addLabel).not.toHaveBeenCalled();
     expect(removeLabel).not.toHaveBeenCalled();
     expect((await store.allLabels()).get("a")).toEqual(rec("a", "purge/promotion", { labeledAt: JUST }));
-    expect((await store.getScan())?.deferred).toBe(1);
 
     const later = await reconcile({ gmail, store, now: () => AFTER }, DEFAULT_SETTINGS);
     expect(later).toEqual({ added: 0, removed: 0, moved: 0, userRemoved: 1, userChosen: 0, deferred: 0 });
     expect(addLabel).not.toHaveBeenCalled();
     expect(gmail.labelsOf.has("a")).toBe(false);
-    expect((await store.getScan())?.deferred).toBe(0);
   });
 
   it("keeps an app-named label it has no record of and records it as the user's", async () => {
     const store = await openStore(`t-${crypto.randomUUID()}`);
     const gmail = createFakeGmail([makeSummary("mine")]);
+    await store.putScan({ years: 10, candidateIds: [], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
     gmail.labelsOf.set("mine", new Set(["purge/work"]));
     const r = await reconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);
     expect(r).toMatchObject({ added: 0, removed: 0, moved: 0 });
@@ -571,21 +570,6 @@ describe("summarize", () => {
   });
 });
 
-describe("settingsEqual", () => {
-  it("ignores checkbox order", () => {
-    expect(settingsEqual({ ...DEFAULT_SETTINGS, purgeKinds: ["work", "scam"] }, { ...DEFAULT_SETTINGS, purgeKinds: ["scam", "work"] })).toBe(true);
-    expect(settingsEqual({ ...DEFAULT_SETTINGS, protects: ["personal", "financial"] }, { ...DEFAULT_SETTINGS, protects: ["financial", "personal"] })).toBe(true);
-    expect(settingsEqual(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, strictness: "careful" })).toBe(false);
-  });
-
-  it("compares the label prefix and protection checkboxes", () => {
-    expect(settingsEqual(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, labelPrefix: "other" })).toBe(false);
-    expect(settingsEqual(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, keepAttachments: false })).toBe(false);
-    expect(settingsEqual(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, keepStarred: false })).toBe(false);
-    expect(settingsEqual(DEFAULT_SETTINGS, { ...DEFAULT_SETTINGS, years: 5 })).toBe(false);
-  });
-});
-
 describe("labelTotalsAfter", () => {
   it("counts live labels after adds and removes", () => {
     const plan = planReconcile(
@@ -632,5 +616,51 @@ describe("previewReconcile", () => {
     const preview = await previewReconcile({ gmail, store, now: () => NOW }, { ...DEFAULT_SETTINGS, labelPrefix: "new" });
     expect(preview.oldPrefixes).toEqual(["purge"]);
     expect(preview.moved).toBe(1);
+  });
+
+  it("names no old prefix for an emptied label without a slash", async () => {
+    const { store, gmail } = await arrange();
+    const oldId = await gmail.ensureLabel("oldlabel");
+    await gmail.addLabel(oldId, ["a"]);
+    await store.putLabels([rec("a", "oldlabel")]);
+    const preview = await previewReconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);
+    expect(preview.plan.remove.get("oldlabel")).toEqual(["a"]);
+    expect(preview.oldPrefixes).toEqual([]);
+  });
+
+  it("rejects without calling Gmail when the scan has not finished", async () => {
+    for (const scan of [{ finished: false }, { finished: true, settingsAtScan: null }]) {
+      const { store, gmail } = await arrange();
+      await store.putScan({ ...(await store.getScan())!, ...scan });
+      const calls = (["findLabelId", "listIds", "ensureLabel", "addLabel", "removeLabel"] as const).map((m) => vi.spyOn(gmail, m));
+      const err = await previewReconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(AppError);
+      expect((err as AppError).payload).toEqual({ kind: "Invalid", detail: "Scan your mail first." });
+      for (const spy of calls) expect(spy).not.toHaveBeenCalled();
+    }
+    const store = await openStore(`t-${crypto.randomUUID()}`);
+    await expect(previewReconcile({ gmail: createFakeGmail([]), store, now: () => NOW }, DEFAULT_SETTINGS)).rejects.toBeInstanceOf(AppError);
+  });
+
+  it("saves a store-only plan without Gmail writes, so a later Gmail removal of an override's label sticks", async () => {
+    const { store, gmail } = await arrange();
+    // Labeled by an earlier Apply, then overridden to the same label on the Review screen.
+    const labelId = await gmail.ensureLabel("purge/promotion");
+    await gmail.addLabel(labelId, ["a"]);
+    await store.putLabels([rec("a", "purge/promotion")]);
+    await store.putOverrides(["a"], "promotion", OLD + 1);
+
+    const preview = await previewReconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);
+    expect(isPending(preview)).toBe(false);
+    expect(preview.plan.put.length).toBeGreaterThan(0);
+    const writes = (["ensureLabel", "addLabel", "removeLabel"] as const).map((m) => vi.spyOn(gmail, m));
+    await applyPreview({ gmail, store }, DEFAULT_SETTINGS, preview);
+    for (const spy of writes) expect(spy).not.toHaveBeenCalled();
+
+    // The user takes the label off in Gmail; once the grace window passes, that removal is theirs.
+    await gmail.removeLabel(labelId, ["a"]);
+    const later = await previewReconcile({ gmail, store, now: () => NOW + USER_CHANGE_GRACE_MS }, DEFAULT_SETTINGS);
+    expect(later.plan.add.size).toBe(0);
+    expect(later.plan.userRemoved).toBe(1);
   });
 });

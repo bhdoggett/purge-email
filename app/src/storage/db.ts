@@ -28,8 +28,6 @@ export interface ScanRecord {
   startedAt: number;
   /** Settings the labels currently in Gmail were computed with; null until a scan finishes. */
   settingsAtScan: Settings | null;
-  /** Label changes the last reconcile held back because Gmail's lists hadn't caught up yet. */
-  deferred?: number;
   /** Measured average ms per email for emails that needed Gmail and Jev calls. */
   msPerEmail: number | null;
 }
