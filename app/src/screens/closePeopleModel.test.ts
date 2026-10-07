@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SenderStats } from "../storage/db.ts";
-import { closeCount, closeRows, emailsText, PAGE_SIZE } from "./closePeopleModel.ts";
+import { closeCount, closeRows, countStatus, emailsText, PAGE_SIZE } from "./closePeopleModel.ts";
 
 const person = (address: string, name: string, sent: number, years: number[]) => ({ address, name, nameAt: 0, sent, years });
 const stats: SenderStats = {
@@ -44,5 +44,17 @@ describe("emailsText", () => {
     expect(emailsText(214, 12)).toBe("214 emails over 12 years");
     expect(emailsText(1, 1)).toBe("1 email over 1 year");
     expect(emailsText(1200, 0)).toBe("1,200 emails");
+  });
+});
+
+describe("countStatus", () => {
+  it("is none without counts, or with counts from another account", () => {
+    expect(countStatus(null, "me@gmail.com")).toBe("none");
+    expect(countStatus(stats, "other@gmail.com")).toBe("none");
+    expect(countStatus(stats, null)).toBe("none");
+  });
+  it("is partial while counting is unfinished, and done once complete", () => {
+    expect(countStatus({ ...stats, complete: false }, "Me@Gmail.com")).toBe("partial");
+    expect(countStatus(stats, "me@gmail.com")).toBe("done");
   });
 });

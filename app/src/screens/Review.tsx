@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
 import { COUNTING_HINT, isCounting, useCounter } from "../useCounter.ts";
 import type { Answers } from "@core/questions.ts";
@@ -104,6 +104,18 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
   useEffect(() => {
     void load();
   }, []);
+
+  // A count of sent mail that just finished can change who is close: reload the close list, as Apply does.
+  const wasCounting = useRef(counting);
+  useEffect(() => {
+    if (wasCounting.current && !counting) {
+      void currentAccount(services.gmail)
+        .then((account) => loadCloseContext(store, account))
+        .then((close) => setData((d) => (d ? { ...d, close } : d)))
+        .catch(() => {});
+    }
+    wasCounting.current = counting;
+  }, [counting]);
 
   const rows = useMemo(() => (data ? buildTableRows(data.ids, data.summaries, data.answers, overrides, data.settings, data.now, data.close) : []), [data, overrides]);
   const filtered = useMemo(() => filterRows(rows, filters, data?.now ?? Date.now()), [rows, filters, data]);

@@ -35,3 +35,12 @@ export function emailsText(sent: number, years: number): string {
   const emails = `${sent.toLocaleString("en-US")} email${sent === 1 ? "" : "s"}`;
   return years > 0 ? `${emails} over ${years} year${years === 1 ? "" : "s"}` : emails;
 }
+
+/**
+ * Where counting stands for `account` (the signed-in address): none (never counted, or counted for
+ * another account), partial (stopped before the end), or done.
+ */
+export function countStatus(stats: SenderStats | null, account: string | null): "none" | "partial" | "done" {
+  if (!stats || account === null || stats.ownAddress !== account.toLowerCase()) return "none";
+  return stats.complete ? "done" : "partial";
+}

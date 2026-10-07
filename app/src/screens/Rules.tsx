@@ -197,6 +197,9 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
         <Button disabled={busy || applying || counting || est?.count === 0 || prefixError !== null} onClick={startScan}>
           {resumable ? "Resume scan" : "Start scan"}
         </Button>
+        {settings.trivialPersonal && (
+          <p className={styles.estimateNote}>Personal emails from people you're not close to get one extra Jev question, so the cost may be a little higher.</p>
+        )}
       </div>
     </section>
   );
