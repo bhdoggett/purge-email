@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS, type Settings } from "@core/decide.ts";
 import type { Answers } from "@core/questions.ts";
 import type { Summary } from "../gmail/client.ts";
@@ -100,15 +100,43 @@ describe("planReconcile", () => {
     expect(empty(again)).toBe(true);
   });
 
-  it("does not mark user-removed inside the grace window, and leaves the email alone", () => {
+  it("does not mark user-removed inside the grace window, and trusts the record's label", () => {
     const records = new Map([["a", rec("a", "purge/newsletter", { labeledAt: NOW - 1000 })]]);
     const plan = planReconcile(input({ a: fakeAnswers({ newsletter: 0.95 }) }, { records }));
     expect(plan.userRemoved).toBe(0);
     expect(empty(plan)).toBe(true);
 
-    // Even when the desired label changed, a just-labeled email missing from Gmail's lists is not touched.
+    // The desired label is now none: the recorded label comes off and the record goes.
     const changed = planReconcile(input({ a: fakeAnswers({ newsletter: 0.95 }) }, { records, settings: { ...DEFAULT_SETTINGS, purgeKinds: [] } }));
-    expect(empty(changed)).toBe(true);
+    expect(changed.userRemoved).toBe(0);
+    expect(changed.remove).toEqual(new Map([["purge/newsletter", ["a"]]]));
+    expect(changed.add.size).toBe(0);
+    expect(changed.put).toEqual([]);
+    expect(changed.del).toEqual(["a"]);
+  });
+
+  it("moves a just-labeled email missing from Gmail's lists to its new kind", () => {
+    const records = new Map([["a", rec("a", "purge/promotion", { labeledAt: NOW - 1000 })]]);
+    const plan = planReconcile(input({ a: fakeAnswers({ promotion: 0.4, newsletter: 0.55 }) }, { records }));
+    expect(plan.remove).toEqual(new Map([["purge/promotion", ["a"]]]));
+    expect(plan.add).toEqual(new Map([["purge/newsletter", ["a"]]]));
+    expect(plan.put).toEqual([{ id: "a", label: "purge/newsletter", labeledAt: NOW, userRemoved: false, userChosen: false }]);
+  });
+
+  it("renames the prefix of a just-labeled email missing from Gmail's lists", () => {
+    const records = new Map([["a", rec("a", "purge/scam", { labeledAt: NOW - 1000 })]]);
+    const plan = planReconcile(input({ a: fakeAnswers({ scam: 0.95 }) }, { records, settings: { ...DEFAULT_SETTINGS, labelPrefix: "old" } }));
+    expect(plan.userRemoved + plan.userChosen).toBe(0);
+    expect(plan.remove).toEqual(new Map([["purge/scam", ["a"]]]));
+    expect(plan.add).toEqual(new Map([["old/scam", ["a"]]]));
+    expect(plan.put).toEqual([{ id: "a", label: "old/scam", labeledAt: NOW, userRemoved: false, userChosen: false }]);
+  });
+
+  it("keeps labeledAt when a record is corrected without adding a label", () => {
+    const records = new Map([["a", rec("a", "purge/promotion", { labeledAt: NOW - 1000 })]]);
+    const plan = planReconcile(input({ a: fakeAnswers({ newsletter: 0.95 }) }, { records, ...labeled({ a: "purge/newsletter" }) }));
+    expect(plan.add.size + plan.remove.size).toBe(0);
+    expect(plan.put).toEqual([rec("a", "purge/newsletter", { labeledAt: NOW - 1000 })]);
   });
 
   it("marks user-chosen when Gmail shows a different app label and leaves it untouched afterwards", () => {
@@ -203,6 +231,23 @@ describe("reconcile", () => {
     expect(records.get("news")?.labeledAt).toBe(NOW);
     expect(records.get("promo")).toEqual({ id: "promo", label: "purge/maybe", labeledAt: later, userRemoved: false, userChosen: false });
     expect((await store.getScan())?.settingsAtScan).toEqual(settings);
+  });
+
+  it("skips removing a label the user deleted from Gmail", async () => {
+    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const gmail = createFakeGmail([makeSummary("a")]);
+    await store.putSummary(makeSummary("a"));
+    await store.putAnswers("a", fakeAnswers({ newsletter: 0.95 }));
+    await store.putScan({ years: 10, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
+    // Just labeled purge/promotion, but that label no longer exists in Gmail.
+    await store.putLabels([rec("a", "purge/promotion", { labeledAt: NOW - 1000 })]);
+    const removeLabel = vi.spyOn(gmail, "removeLabel");
+
+    const r = await reconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);
+    expect(removeLabel).not.toHaveBeenCalled();
+    expect(r).toEqual({ added: 0, removed: 0, moved: 1, userRemoved: 0, userChosen: 0 });
+    expect(gmail.labelsOf.get("a")).toEqual(new Set(["purge/newsletter"]));
+    expect((await store.allLabels()).get("a")?.label).toBe("purge/newsletter");
   });
 
   it("leaves a trashed labeled email alone and detects a user removal", async () => {

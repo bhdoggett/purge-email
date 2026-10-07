@@ -107,13 +107,13 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
     const isLive = i.live.has(id);
     // In Trash or Spam: never changed.
     if (!isLive && i.anywhere.has(id)) continue;
-    // Just labeled but not yet in Gmail's lists: we can't see its real state, so leave it.
-    if (!isLive && r && inGrace(r)) continue;
-    const current = isLive ? (i.anywhere.get(id) ?? null) : null;
+    // Just labeled but not yet in Gmail's lists: trust the record's own label.
+    const current = isLive ? (i.anywhere.get(id) ?? null) : r && inGrace(r) ? r.label : null;
     const want = desired.get(id) ?? null;
 
     if (current === want) {
-      if (want !== null && r?.label !== want) plan.put.push({ id, label: want, labeledAt: i.now, userRemoved: false, userChosen: false });
+      // Nothing is added, so an existing record keeps its labeledAt.
+      if (want !== null && r?.label !== want) plan.put.push({ id, label: want, labeledAt: r?.labeledAt ?? i.now, userRemoved: false, userChosen: false });
       continue;
     }
     if (current !== null) push(plan.remove, current, id);
@@ -176,7 +176,11 @@ export async function reconcile(
 
   // Add before remove: if this stops halfway, an email has two labels rather than none.
   for (const [name, ids] of plan.add) await gmail.addLabel(await gmail.ensureLabel(name), ids);
-  for (const [name, ids] of plan.remove) await gmail.removeLabel(labelIds.get(name)!, ids);
+  for (const [name, ids] of plan.remove) {
+    // A label the user deleted from Gmail is already off every email.
+    const labelId = labelIds.get(name);
+    if (labelId !== undefined) await gmail.removeLabel(labelId, ids);
+  }
   await store.putLabels(plan.put);
   await store.deleteLabels(plan.del);
   if (scan) await store.putScan({ ...scan, settingsAtScan: settings });
