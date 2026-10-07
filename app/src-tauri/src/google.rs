@@ -59,6 +59,6 @@ pub async fn refresh_access_token(http: &reqwest::Client) -> Result<(String, Dur
     if !status.is_success() {
         return Err(oauth_error(&body));
     }
-    let t: TokenResponse = serde_json::from_str(&body).map_err(|e| AppError::Invalid(e.to_string()))?;
+    let t: TokenResponse = serde_json::from_str(&body).map_err(|_| AppError::Invalid("Unexpected token response from Google".into()))?;
     Ok((t.access_token, Duration::from_secs(t.expires_in)))
 }

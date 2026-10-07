@@ -8,7 +8,10 @@ pub struct TokenCache {
 
 impl TokenCache {
     pub fn new() -> Self {
-        Self { http: reqwest::Client::new(), inner: Mutex::new(None) }
+        Self { http: reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("http client"), inner: Mutex::new(None) }
     }
 
     pub async fn clear(&self) {

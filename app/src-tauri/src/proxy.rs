@@ -8,17 +8,27 @@ pub enum Service {
     Jev,
 }
 
-pub fn check_url(raw: &str) -> Result<Service, AppError> {
+/// Validates `raw` and returns the service plus the parsed URL that must be the one sent.
+pub fn parse_allowed(raw: &str) -> Result<(Service, url::Url), AppError> {
     let refuse = || AppError::HostNotAllowed(raw.to_string());
     let url = url::Url::parse(raw).map_err(|_| refuse())?;
-    if url.scheme() != "https" || !url.username().is_empty() || url.password().is_some() {
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port().is_some()
+    {
         return Err(refuse());
     }
     match url.host_str() {
-        Some("gmail.googleapis.com") => Ok(Service::Gmail),
-        Some("api.typesafe.ai") => Ok(Service::Jev),
+        Some("gmail.googleapis.com") => Ok((Service::Gmail, url)),
+        Some("api.typesafe.ai") => Ok((Service::Jev, url)),
         _ => Err(refuse()),
     }
+}
+
+#[cfg(test)]
+fn check_url(raw: &str) -> Result<Service, AppError> {
+    parse_allowed(raw).map(|(s, _)| s)
 }
 
 #[derive(Deserialize)]
@@ -38,7 +48,7 @@ pub struct ApiResponse {
 
 #[tauri::command]
 pub async fn api_request(req: ApiRequest, cache: tauri::State<'_, TokenCache>) -> Result<ApiResponse, AppError> {
-    let service = check_url(&req.url)?;
+    let (service, url) = parse_allowed(&req.url)?;
     let method = reqwest::Method::from_bytes(req.method.as_bytes()).map_err(|e| AppError::Invalid(e.to_string()))?;
 
     // Gmail gets one retry with a forced token refresh after a 401.
@@ -47,7 +57,7 @@ pub async fn api_request(req: ApiRequest, cache: tauri::State<'_, TokenCache>) -
             Service::Jev => format!("Bearer {}", secrets::get_jev()?),
             Service::Gmail => format!("Bearer {}", cache.access_token(attempt == 1).await?),
         };
-        let mut rb = cache.http.request(method.clone(), &req.url);
+        let mut rb = cache.http.request(method.clone(), url.clone());
         for (k, v) in &req.headers {
             if !k.eq_ignore_ascii_case("authorization") && !k.eq_ignore_ascii_case("host") {
                 rb = rb.header(k, v);
@@ -90,6 +100,8 @@ mod tests {
             "https://evil.example.com/",
             "https://gmail.googleapis.com.evil.example.com/",
             "https://api.typesafe.ai@evil.example.com/",
+            "https://gmail.googleapis.com:8443/",
+            "https://:p@gmail.googleapis.com/",
             "not a url",
         ] {
             assert!(matches!(check_url(url), Err(AppError::HostNotAllowed(_))), "{url}");

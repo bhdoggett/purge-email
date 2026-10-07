@@ -26,23 +26,37 @@ fn parse_callback(request: &str) -> Option<Vec<(String, String)>> {
     if pairs.iter().any(|(k, _)| k == "code" || k == "error") { Some(pairs) } else { None }
 }
 
-async fn wait_for_callback(listener: &TcpListener) -> Result<Vec<(String, String)>, AppError> {
+async fn respond(stream: &mut tokio::net::TcpStream, status: &str, page: &str) {
+    let response = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}",
+        page.len()
+    );
+    let _ = stream.write_all(response.as_bytes()).await;
+}
+
+/// Waits for the callback whose `state` matches. Anything else (stray requests, idle or reset
+/// sockets, mismatched state) is dropped and the listener keeps waiting.
+async fn wait_for_callback(listener: &TcpListener, state: &str) -> Vec<(String, String)> {
     loop {
-        let (mut stream, _) = listener.accept().await.map_err(|e| AppError::Network(e.to_string()))?;
+        let Ok((mut stream, _)) = listener.accept().await else { continue };
         let mut buf = vec![0u8; 8192];
-        let n = stream.read(&mut buf).await.map_err(|e| AppError::Network(e.to_string()))?;
+        let n = match tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf)).await {
+            Ok(Ok(n)) => n,
+            _ => continue,
+        };
         let request = String::from_utf8_lossy(&buf[..n]);
         match parse_callback(&request) {
-            Some(pairs) => {
-                let page = "<html><body style=\"font-family:system-ui;padding:40px\"><h2>Done.</h2><p>You can close this tab and return to Purge Email.</p></body></html>";
-                let response = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}", page.len());
-                let _ = stream.write_all(response.as_bytes()).await;
-                return Ok(pairs);
+            Some(pairs) if pairs.iter().any(|(k, v)| k == "state" && v == state) => {
+                let failed = pairs.iter().any(|(k, _)| k == "error");
+                let page = if failed {
+                    "<html><body style=\"font-family:system-ui;padding:40px\"><h2>Sign-in was not completed.</h2><p>Return to Purge Email.</p></body></html>"
+                } else {
+                    "<html><body style=\"font-family:system-ui;padding:40px\"><h2>Done.</h2><p>You can close this tab and return to Purge Email.</p></body></html>"
+                };
+                respond(&mut stream, "200 OK", page).await;
+                return pairs;
             }
-            None => {
-                // Stray request such as /favicon.ico.
-                let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
-            }
+            _ => respond(&mut stream, "404 Not Found", "").await,
         }
     }
 }
@@ -71,15 +85,12 @@ pub async fn google_sign_in(app: tauri::AppHandle, cache: tauri::State<'_, Token
         .open_url(auth.as_str(), None::<&str>)
         .map_err(|e| AppError::Network(e.to_string()))?;
 
-    let pairs = tokio::time::timeout(Duration::from_secs(300), wait_for_callback(&listener))
+    let pairs = tokio::time::timeout(Duration::from_secs(300), wait_for_callback(&listener, &state))
         .await
-        .map_err(|_| AppError::SignInTimeout)??;
+        .map_err(|_| AppError::SignInTimeout)?;
     let get = |k: &str| pairs.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
     if let Some(err) = get("error") {
         return Err(AppError::Google { code: err, message: "Google declined the sign-in".into() });
-    }
-    if get("state").as_deref() != Some(state.as_str()) {
-        return Err(AppError::Invalid("OAuth state mismatch".into()));
     }
     let code = get("code").ok_or_else(|| AppError::Invalid("missing code".into()))?;
 
@@ -101,7 +112,7 @@ pub async fn google_sign_in(app: tauri::AppHandle, cache: tauri::State<'_, Token
     if !status.is_success() {
         return Err(google::oauth_error(&body));
     }
-    let tokens: google::TokenResponse = serde_json::from_str(&body).map_err(|e| AppError::Invalid(e.to_string()))?;
+    let tokens: google::TokenResponse = serde_json::from_str(&body).map_err(|_| AppError::Invalid("Unexpected token response from Google".into()))?;
     let refresh = tokens.refresh_token.ok_or_else(|| AppError::Invalid("Google returned no refresh token".into()))?;
 
     let profile = cache.http.get(PROFILE_URL).bearer_auth(&tokens.access_token).send().await?;
