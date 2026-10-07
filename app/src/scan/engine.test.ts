@@ -35,6 +35,7 @@ describe("ScanEngine", () => {
     expect((await store.allLabels()).get("promo")?.label).toBe("purge/promotion");
     expect((await store.getScan())?.finished).toBe(true);
     expect((await store.getScan())?.settingsAtScan).toEqual(DEFAULT_SETTINGS);
+    expect((await store.getScan())?.deferred).toBe(0);
     expect(p.recent.find((r) => r.id === "promo")?.label).toBe("purge/promotion");
     expect(p.recent.find((r) => r.id === "mom")?.label).toBeNull();
     expect(notify).toHaveBeenCalledWith("Scan finished", '1 to purge and 0 to check, labeled under "purge".');

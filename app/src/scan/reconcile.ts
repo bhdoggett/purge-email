@@ -1,7 +1,8 @@
 import { decide, type Settings } from "@core/decide.ts";
 import { appLabelNames, labelFor } from "@core/labels.ts";
 import type { Answers } from "@core/questions.ts";
-import type { Gmail, Summary } from "../gmail/client.ts";
+import { AppError } from "../bridge/errors.ts";
+import { type Gmail, GmailError, type Summary } from "../gmail/client.ts";
 import type { LabelRecord, Store } from "../storage/db.ts";
 
 /** Gmail's lists can lag behind label changes; a record younger than this is never read as a user change. */
@@ -27,6 +28,16 @@ export interface ReconcilePlan {
   del: string[];
   userRemoved: number;
   userChosen: number;
+  /** Just-labeled ids left alone because Gmail's lists don't confirm their label yet. */
+  deferred: number;
+}
+
+/** Gmail answers 400 or 409 when it refuses a label name. */
+export function asLabelNameError(err: unknown): unknown {
+  if (err instanceof GmailError && (err.status === 400 || err.status === 409)) {
+    return new AppError({ kind: "Invalid", detail: "Gmail didn't accept that label name. Try another on the Rules screen." });
+  }
+  return err;
 }
 
 export function settingsEqual(a: Settings, b: Settings): boolean {
@@ -67,10 +78,12 @@ function push(map: Map<string, string[]>, key: string, id: string) {
 
 /**
  * Decides which app labels to add and remove so Gmail matches `settings`, without touching
- * anything the user changed by hand or anything in Trash or Spam.
+ * anything the user changed by hand, any app-named label the app has no record of, or anything
+ * in Trash or Spam. Inside the grace window it only acts when Gmail's lists confirm the recorded
+ * label; otherwise it defers, so it never undoes a change the user just made.
  */
 export function planReconcile(i: ReconcileInput): ReconcilePlan {
-  const plan: ReconcilePlan = { add: new Map(), remove: new Map(), put: [], del: [], userRemoved: 0, userChosen: 0 };
+  const plan: ReconcilePlan = { add: new Map(), remove: new Map(), put: [], del: [], userRemoved: 0, userChosen: 0, deferred: 0 };
   const records = new Map(i.records);
   const inGrace = (r: LabelRecord) => i.now - r.labeledAt < USER_CHANGE_GRACE_MS;
 
@@ -92,7 +105,15 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
     }
   }
 
-  // 2. Desired label per id: only candidates with a summary can have one.
+  // 2. An app-named label the app has no record of may be the user's own: record it as theirs and never touch it.
+  for (const id of i.live) {
+    if (records.has(id)) continue;
+    const r: LabelRecord = { id, label: i.anywhere.get(id)!, labeledAt: i.now, userRemoved: false, userChosen: true };
+    records.set(id, r);
+    plan.put.push(r);
+  }
+
+  // 3. Desired label per id: only candidates with a summary can have one.
   const desired = new Map<string, string | null>();
   for (const id of i.candidates) {
     const s = i.summaries.get(id);
@@ -100,8 +121,7 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
     desired.set(id, s ? labelFor(decisionOf(s, answers, i.settings), answers, i.settings) : null);
   }
 
-  // 3. Apply to live, candidate and just-labeled ids the user hasn't taken over.
-  // Just-labeled records too: Gmail's lists may not show them yet, but their labels still need to follow the rules.
+  // 4. Apply to live, candidate and just-labeled ids the user hasn't taken over.
   const recent = [...records.values()].filter((r) => inGrace(r)).map((r) => r.id);
   for (const id of new Set([...i.candidates, ...i.live, ...recent])) {
     const r = records.get(id);
@@ -109,15 +129,15 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
     const isLive = i.live.has(id);
     // In Trash or Spam: never changed.
     if (!isLive && i.anywhere.has(id)) continue;
-    // Just labeled but not yet in Gmail's lists: trust the record's own label.
-    const current = isLive ? (i.anywhere.get(id) ?? null) : r && inGrace(r) ? r.label : null;
+    const current = isLive ? i.anywhere.get(id)! : null;
     const want = desired.get(id) ?? null;
-
-    if (current === want) {
-      // Nothing is added, so an existing record keeps its labeledAt.
-      if (want !== null && r?.label !== want) plan.put.push({ id, label: want, labeledAt: r?.labeledAt ?? i.now, userRemoved: false, userChosen: false });
+    // Just labeled: Gmail's lists may lag behind, so a missing or different label could be lag or a
+    // user change. Act only when Gmail confirms the recorded label; otherwise wait for the window to pass.
+    if (r && inGrace(r) && current !== r.label) {
+      if (current !== null || want !== r.label) plan.deferred++;
       continue;
     }
+    if (current === want) continue;
     if (current !== null) push(plan.remove, current, id);
     if (want !== null) {
       push(plan.add, want, id);
@@ -141,7 +161,7 @@ async function idsOf(gmail: Gmail, labelId: string, includeSpamTrash: boolean): 
 export async function reconcile(
   deps: { gmail: Gmail; store: Store; now?: () => number },
   settings: Settings,
-): Promise<{ added: number; removed: number; moved: number; userRemoved: number; userChosen: number }> {
+): Promise<{ added: number; removed: number; moved: number; userRemoved: number; userChosen: number; deferred: number }> {
   const { gmail, store } = deps;
   const now = (deps.now ?? Date.now)();
   const scan = await store.getScan();
@@ -177,7 +197,12 @@ export async function reconcile(
   });
 
   // Add before remove: if this stops halfway, an email has two labels rather than none.
-  for (const [name, ids] of plan.add) await gmail.addLabel(await gmail.ensureLabel(name), ids);
+  for (const [name, ids] of plan.add) {
+    const labelId = await gmail.ensureLabel(name).catch((err: unknown) => {
+      throw asLabelNameError(err);
+    });
+    await gmail.addLabel(labelId, ids);
+  }
   for (const [name, ids] of plan.remove) {
     // A label the user deleted from Gmail is already off every email.
     const labelId = labelIds.get(name);
@@ -185,12 +210,12 @@ export async function reconcile(
   }
   await store.putLabels(plan.put);
   await store.deleteLabels(plan.del);
-  if (scan) await store.putScan({ ...scan, settingsAtScan: settings });
+  if (scan) await store.putScan({ ...scan, settingsAtScan: settings, deferred: plan.deferred });
 
   const added = new Set([...plan.add.values()].flat());
   const removed = new Set([...plan.remove.values()].flat());
   const moved = [...added].filter((id) => removed.has(id)).length;
-  return { added: added.size - moved, removed: removed.size - moved, moved, userRemoved: plan.userRemoved, userChosen: plan.userChosen };
+  return { added: added.size - moved, removed: removed.size - moved, moved, userRemoved: plan.userRemoved, userChosen: plan.userChosen, deferred: plan.deferred };
 }
 
 /** Message count per app label under the current prefix, skipping starred mail when it is protected. Labels with none are left out. */
