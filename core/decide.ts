@@ -19,6 +19,8 @@ export interface Settings {
   labelPrefix: string;
   keepAttachments: boolean;
   keepStarred: boolean;
+  /** Send each email's ~200-character body preview to Jev. Off: Jev judges from headers, labels and file names only. */
+  sendPreviews: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -29,6 +31,7 @@ export const DEFAULT_SETTINGS: Settings = {
   labelPrefix: "purge",
   keepAttachments: true,
   keepStarred: true,
+  sendPreviews: true,
 };
 
 /**

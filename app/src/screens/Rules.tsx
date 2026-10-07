@@ -129,6 +129,21 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
         </div>
       </fieldset>
 
+      <fieldset className={styles.group} disabled={busy}>
+        <legend className={styles.legend}>Privacy</legend>
+        <Checkbox
+          label="Send email previews to Jev"
+          description="The first ~200 characters of each email's text. Helps Jev spot personal and financial mail."
+          checked={settings.sendPreviews}
+          onChange={(on) => update({ sendPreviews: on })}
+        />
+        {!settings.sendPreviews && (
+          <p className={styles.choiceNote}>
+            Jev sees only the sender, recipients, subject, date, Gmail labels and attachment names, and previews aren't kept on this computer. More emails may land in maybe. Emails already judged keep their results.
+          </p>
+        )}
+      </fieldset>
+
       <div className={styles.labelName}>
         <label className={styles.labelNameField}>
           Label name

@@ -94,12 +94,13 @@ Choose which kinds of messages Jev should label for purging (newsletters, promot
 
 The app searches Gmail for emails older than your configured age (skipping spam, trash, chats, and, when those checkboxes are on, emails with attachments and starred emails). For each email, it sends the following to the Jev AI model to judge whether it's worth keeping:
 - Sender (from), recipients (to, cc)
-- Subject, date, and snippet
+- Subject, date, and snippet (Gmail's ~200-character preview of the text), unless "Send email previews to Jev" is off under Privacy on the Rules screen
+- Attachment file names, when emails with attachments aren't protected
 - Whether you've replied in the thread
 - Whether there's an unsubscribe header
 - Gmail labels applied to the email
 
-Email bodies and attachments are never sent to Jev. The scan runs in the background and can be paused or resumed.
+Full email bodies and attachment contents are never sent to Jev. With previews off, the preview is also not kept on this computer; emails Jev already judged keep their results. The scan runs in the background and can be paused or resumed.
 
 ### Review
 

@@ -22,6 +22,19 @@ async function setup(messages = [makeSummary("promo"), makeSummary("mom"), makeS
 }
 
 describe("ScanEngine", () => {
+  it("sends email previews to Jev only when the setting allows it, and keeps none locally when it doesn't", async () => {
+    const msgs = () => [makeSummary("promo", { snippet: "Your code is 123456" })];
+    const on = await setup(msgs());
+    await on.engine.start({ ...DEFAULT_SETTINGS, sendPreviews: true });
+    expect(on.judge.mock.calls[0]![0]).toMatchObject({ snippet: "Your code is 123456" });
+    expect((await on.store.getSummary("promo"))?.snippet).toBe("Your code is 123456");
+
+    const off = await setup(msgs());
+    await off.engine.start({ ...DEFAULT_SETTINGS, sendPreviews: false });
+    expect(off.judge.mock.calls[0]![0]).toMatchObject({ snippet: "" });
+    expect((await off.store.getSummary("promo"))?.snippet).toBe("");
+  });
+
   it("judges candidates, skips Jev for attachments, and writes nothing to Gmail", async () => {
     const { gmail, judge, engine, store, notify } = await setup();
     const addLabel = vi.spyOn(gmail, "addLabel");

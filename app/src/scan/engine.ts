@@ -132,13 +132,17 @@ export class ScanEngine {
               summary = await store.getSummary(id);
               if (!summary) {
                 summary = await gmail.getSummary(id);
+                // With previews off, the body preview is neither kept on this computer nor sent to Jev.
+                if (!settings.sendPreviews) summary = { ...summary, snippet: "" };
                 await store.putSummary(summary);
                 networked = true;
               }
               const cached = await store.getAnswers(id);
               answers = cached && cached.version === QUESTIONS_VERSION ? cached : null;
               if (!answers && (summary.attachmentNames.length === 0 || !settings.keepAttachments)) {
-                answers = await judge({ ...summary, ownerReplied: replied.has(summary.threadId) });
+                // A summary saved while previews were on still has its preview: strip it before Jev sees it.
+                const facts = settings.sendPreviews ? summary : { ...summary, snippet: "" };
+                answers = await judge({ ...facts, ownerReplied: replied.has(summary.threadId) });
                 await store.putAnswers(id, answers);
                 networked = true;
                 this.set({ costUsd: this.progress.costUsd + answers.inputTokens * JEV_USD_PER_TOKEN });

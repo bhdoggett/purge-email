@@ -144,3 +144,11 @@ describe("normalizeSettings", () => {
     expect(normalizeSettings({}, DEFAULT_SETTINGS).ageMonths).toBe(120);
   });
 });
+
+describe("sendPreviews setting", () => {
+  it("defaults to sending previews and fills it in for settings saved before it existed", () => {
+    expect(DEFAULT_SETTINGS.sendPreviews).toBe(true);
+    expect(normalizeSettings({ ageMonths: 6 }, DEFAULT_SETTINGS).sendPreviews).toBe(true);
+    expect(normalizeSettings({ sendPreviews: false }, DEFAULT_SETTINGS).sendPreviews).toBe(false);
+  });
+});
