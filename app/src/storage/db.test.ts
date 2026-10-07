@@ -449,7 +449,7 @@ describe("encryption at rest", () => {
 });
 
 describe("close people data", () => {
-  const stats = { ownAddress: "me@gmail.com", counted: ["s1"], people: [{ address: "ann.lee@example.com", name: "Ann Lee", nameAt: 1, sent: 12, years: [2019, 2020] }] };
+  const stats = { ownAddress: "me@gmail.com", counted: ["s1"], complete: true, people: [{ address: "ann.lee@example.com", name: "Ann Lee", nameAt: 1, sent: 12, years: [2019, 2020] }] };
 
   async function rawKv(name: string, key: string) {
     const db = await openDB(name);

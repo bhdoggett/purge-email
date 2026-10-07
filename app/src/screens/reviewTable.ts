@@ -3,6 +3,7 @@ import { ageText, kindOfSlug, MAYBE, PERSONAL_SLUG, slugOfLabel, suggestedSlug }
 import { type Answers, PROTECTS, PURGE_KINDS, type ProtectId, type PurgeKind } from "@core/questions.ts";
 import type { Summary } from "../gmail/client.ts";
 import type { Override } from "../storage/db.ts";
+import type { CloseContext } from "../scan/closeness.ts";
 import { effectiveLabel } from "../scan/effective.ts";
 
 export interface TableRow {
@@ -38,6 +39,7 @@ function keptReason(raw: string, suggested: string | null, answers: Answers | nu
   if (raw === "no date") return "Kept: date unknown";
   if (raw === "not judged" || !answers) return "Not judged";
   if (raw === "close person") return "Kept: close person";
+  if (raw === "sender unknown") return "Kept: sender unknown";
   if (raw === "personal unchecked") return "Kept: personal, not checked yet";
   if (raw.startsWith("meaningful ") && answers.significance !== undefined) return `Kept: meaningful ${pct(answers.significance)}%`;
   const protect = PROTECTS.find((p) => p.id === (raw.split(" ")[0] as ProtectId));
@@ -62,8 +64,8 @@ function labelReason(slug: string | null, answers: Answers | null, settings: Set
   return top === null ? "Unsure" : `Unsure: ${kindText(top, answers)}`;
 }
 
-/** `close` holds the user's close people (lowercase addresses). */
-export function buildTableRows(ids: string[], summaries: Map<string, Summary>, answers: Map<string, Answers>, overrides: Map<string, Override>, settings: Settings, now: number, close: ReadonlySet<string>): TableRow[] {
+/** `close` says who the user's close people are. */
+export function buildTableRows(ids: string[], summaries: Map<string, Summary>, answers: Map<string, Answers>, overrides: Map<string, Override>, settings: Settings, now: number, close: CloseContext): TableRow[] {
   const rows: TableRow[] = [];
   for (const id of ids) {
     const summary = summaries.get(id);

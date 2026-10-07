@@ -8,7 +8,7 @@ import type { Screen } from "../App.tsx";
 import { AgeInput } from "../components/AgeInput.tsx";
 import { Button } from "../components/Button.tsx";
 import type { Summary } from "../gmail/client.ts";
-import { loadCloseSet } from "../scan/closeness.ts";
+import { type CloseContext, currentAccount, loadCloseContext } from "../scan/closeness.ts";
 import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
 import type { Services } from "../services.ts";
 import type { Override } from "../storage/db.ts";
@@ -38,8 +38,8 @@ interface Loaded {
   ids: string[];
   summaries: Map<string, Summary>;
   answers: Map<string, Answers>;
-  /** The user's close people when the scan was loaded. */
-  close: Set<string>;
+  /** The user's close people, reloaded when a count of sent mail finishes. */
+  close: CloseContext;
 }
 
 const DECISIONS: { id: DecisionFilter; label: string }[] = [
@@ -84,7 +84,7 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
     try {
       const settings = await store.getSettings();
       const scan = await store.getScan();
-      const [summaries, answers, saved, close] = await Promise.all([store.allSummaries(), store.allAnswers(), store.allOverrides(), loadCloseSet(store)]);
+      const [summaries, answers, saved, close] = await Promise.all([store.allSummaries(), store.allAnswers(), store.allOverrides(), loadCloseContext(store, await currentAccount(services.gmail))]);
       setOverrides(saved);
       setData({
         settings,

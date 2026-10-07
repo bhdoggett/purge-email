@@ -5,6 +5,7 @@ import { Feed } from "../components/Feed.tsx";
 import { RateLimitNote } from "../components/RateLimitNote.tsx";
 import { ProgressBar } from "../components/ProgressBar.tsx";
 import { formatDuration, formatUsd } from "../format.ts";
+import { currentAccount } from "../scan/closeness.ts";
 import { scanCounts } from "../scan/reconcile.ts";
 import type { ScanRecord } from "../storage/db.ts";
 import type { Services } from "../services.ts";
@@ -45,7 +46,7 @@ export function Scan({ services, go, openWizard }: { services: Services; go: (s:
       const scan = await services.store.getScan();
       if (!scan) return setLast(null);
       // Counts follow the current rules, like Review and Apply; rules the scan doesn't cover get none.
-      const counts = await scanCounts(services.store, scan, await services.store.getSettings());
+      const counts = await scanCounts(services.store, scan, await services.store.getSettings(), Date.now(), await currentAccount(services.gmail));
       setLast({ scan, counts });
     })();
   }, [p.stage, services.store]);

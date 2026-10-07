@@ -75,8 +75,13 @@ export interface MessageFlags {
   attachmentCount: number;
   /** ms since epoch from the Date header; null when it is missing or can't be read. */
   receivedAt: number | null;
-  /** The sender is one of the user's close people. */
-  senderClose: boolean;
+  /**
+   * The sender (for mail the user sent: any recipient) is one of the user's close people; null when
+   * the address can't be read, so closeness is unknown.
+   */
+  senderClose: boolean | null;
+  /** The close people list is known: Sent mail fully counted for the signed-in account. */
+  closeKnown: boolean;
 }
 
 export interface DecideResult {
@@ -90,10 +95,11 @@ const PERSONAL_UNCHECKED = "personal unchecked";
 
 /**
  * True when the email would be labeled or kept by the trivial-personal rule, but Jev hasn't been
- * asked whether it is meaningful yet. Close senders and mail kept for other reasons are never asked.
+ * asked whether it is meaningful yet. Close or unknown senders, mail kept for other reasons, and mail
+ * seen before the close list is known are never asked.
  */
 export function needsSignificance(flags: MessageFlags, answers: Answers | null, settings: Settings, now: number): boolean {
-  return decide(flags, answers, settings, now).reason === PERSONAL_UNCHECKED;
+  return flags.closeKnown && decide(flags, answers, settings, now).reason === PERSONAL_UNCHECKED;
 }
 
 export function decide(
@@ -120,7 +126,10 @@ export function decide(
       .sort((a, b) => b[1] - a[1]);
     const top = records[0];
     if (top && top[1] >= protectAt) return { decision: "keep", reason: `${top[0]} ${top[1].toFixed(2)}` };
-    if (flags.senderClose) return { decision: "keep", reason: "close person" };
+    // Without a complete close list, nobody can be ruled out as close.
+    if (!flags.closeKnown) return { decision: "keep", reason: PERSONAL_UNCHECKED };
+    if (flags.senderClose === true) return { decision: "keep", reason: "close person" };
+    if (flags.senderClose === null) return { decision: "keep", reason: "sender unknown" };
     const s = answers.significance;
     if (s === undefined) return { decision: "keep", reason: PERSONAL_UNCHECKED };
     if (s >= TRIVIAL_LINE[settings.strictness]) return { decision: "keep", reason: `meaningful ${s.toFixed(2)}` };

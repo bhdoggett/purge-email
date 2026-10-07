@@ -4,7 +4,7 @@ import type { Answers } from "@core/questions.ts";
 import { AppError } from "../bridge/errors.ts";
 import { type Gmail, GmailError, type Summary } from "../gmail/client.ts";
 import type { LabelRecord, Override, ScanRecord, Store } from "../storage/db.ts";
-import { loadCloseSet } from "./closeness.ts";
+import { type CloseContext, currentAccount, loadCloseContext } from "./closeness.ts";
 import { effectiveLabel } from "./effective.ts";
 
 /** Gmail's lists can lag behind label changes; a record younger than this is never read as a user change. */
@@ -23,8 +23,8 @@ export interface ReconcileInput {
   live: Set<string>;
   /** The user's choices from the Review screen. */
   overrides: Map<string, Override>;
-  /** Addresses of the user's close people (lowercase). */
-  close: ReadonlySet<string>;
+  /** Who is close, for the signed-in account. */
+  close: CloseContext;
 }
 
 export interface ReconcilePlan {
@@ -46,12 +46,13 @@ export function asLabelNameError(err: unknown): unknown {
   return err;
 }
 
-export async function summarize(store: Store, settings: Settings, now: number = Date.now()): Promise<{ purge: number; keep: number; review: number }> {
+/** `account` is the signed-in address; without it nobody is known to be close, so personal mail is kept. */
+export async function summarize(store: Store, settings: Settings, now: number = Date.now(), account: string | null = null): Promise<{ purge: number; keep: number; review: number }> {
   const scan = await store.getScan();
   const summaries = await store.allSummaries();
   const answers = await store.allAnswers();
   const overrides = await store.allOverrides();
-  const close = await loadCloseSet(store);
+  const close = await loadCloseContext(store, account);
   const counts = { purge: 0, keep: 0, review: 0 };
   for (const id of scan?.candidateIds ?? []) {
     const s = summaries.get(id);
@@ -63,9 +64,9 @@ export async function summarize(store: Store, settings: Settings, now: number = 
 }
 
 /** Counts for a finished scan under the current rules, or null when the scan doesn't cover them (or never finished). */
-export async function scanCounts(store: Store, scan: ScanRecord, settings: Settings, now: number = Date.now()): Promise<{ purge: number; keep: number; review: number } | null> {
+export async function scanCounts(store: Store, scan: ScanRecord, settings: Settings, now: number = Date.now(), account: string | null = null): Promise<{ purge: number; keep: number; review: number } | null> {
   if (!scan.settingsAtScan || needsRescan(scan.settingsAtScan, settings)) return null;
-  return summarize(store, settings, now);
+  return summarize(store, settings, now, account);
 }
 
 function push(map: Map<string, string[]>, key: string, id: string) {
@@ -259,7 +260,7 @@ export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?:
     anywhere: state.anywhere,
     live: state.live,
     overrides: await store.allOverrides(),
-    close: await loadCloseSet(store),
+    close: await loadCloseContext(store, await currentAccount(gmail)),
   });
 
   const added = new Set([...plan.add.values()].flat());

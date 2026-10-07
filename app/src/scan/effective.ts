@@ -3,7 +3,7 @@ import { labelFor } from "@core/labels.ts";
 import type { Answers } from "@core/questions.ts";
 import type { Summary } from "../gmail/client.ts";
 import type { Override } from "../storage/db.ts";
-import { senderAddress } from "./closeness.ts";
+import { type CloseContext, parseAddresses, senderAddress } from "./closeness.ts";
 
 export interface Effective {
   /** Full app label the email should carry, or null for none. */
@@ -15,22 +15,33 @@ export interface Effective {
 }
 
 /**
- * What decide() needs to know about an email. An unreadable Date header gives a null `receivedAt`;
- * the sender is close when the From address is in `close` (lowercase addresses).
+ * Whether the email involves a close person: the sender's address, or for mail the user sent (From
+ * is the account, or the SENT label) any To or Cc recipient. Null when no address can be read.
  */
-export function flagsOf(summary: Summary, close: ReadonlySet<string>): MessageFlags {
+function closenessOf(summary: Summary, ctx: CloseContext): boolean | null {
+  const from = senderAddress(summary.from);
+  const sentByUser = summary.labels.includes("SENT") || (ctx.own !== null && from === ctx.own);
+  if (sentByUser) {
+    const recipients = parseAddresses([summary.to, summary.cc].filter(Boolean).join(", "), ctx.own ?? from ?? undefined);
+    return recipients.length === 0 ? null : recipients.some((r) => ctx.close.has(r.address));
+  }
+  return from === null ? null : ctx.close.has(from);
+}
+
+/** What decide() needs to know about an email. An unreadable Date header gives a null `receivedAt`. */
+export function flagsOf(summary: Summary, ctx: CloseContext): MessageFlags {
   const receivedAt = Date.parse(summary.date);
-  const from = close.size > 0 ? senderAddress(summary.from) : null;
   return {
     starred: summary.labels.includes("STARRED"),
     attachmentCount: summary.attachmentNames.length,
     receivedAt: Number.isNaN(receivedAt) ? null : receivedAt,
-    senderClose: from !== null && close.has(from),
+    senderClose: closenessOf(summary, ctx),
+    closeKnown: ctx.known,
   };
 }
 
 /** The one place that turns an email into its label, so Review, Apply and reconcile never disagree. */
-export function effectiveLabel(summary: Summary, answers: Answers | null, override: Override | undefined, settings: Settings, now: number, close: ReadonlySet<string>): Effective {
+export function effectiveLabel(summary: Summary, answers: Answers | null, override: Override | undefined, settings: Settings, now: number, close: CloseContext): Effective {
   const { decision, reason, slug } = decide(flagsOf(summary, close), answers, settings, now);
   if (override) {
     return { label: override.slug === null ? null : `${settings.labelPrefix}/${override.slug}`, source: "override", decision, reason };

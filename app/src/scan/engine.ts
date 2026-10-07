@@ -6,7 +6,7 @@ import { APIError } from "@typesafe-ai/sdk";
 import { AppError, errorAndCause, SignInExpiredError } from "../bridge/errors.ts";
 import { GmailError, type Gmail, type Summary } from "../gmail/client.ts";
 import type { Judge, SignificanceJudge } from "../jev/client.ts";
-import { loadCloseSet } from "./closeness.ts";
+import { currentAccount, loadCloseContext } from "./closeness.ts";
 import { flagsOf } from "./effective.ts";
 import type { ScanRecord, Store } from "../storage/db.ts";
 import { FEED_SIZE, INITIAL_PROGRESS, JEV_USD_PER_TOKEN, Pace, type Progress } from "./progress.ts";
@@ -112,10 +112,9 @@ export class ScanEngine {
 
     try {
       const scan = await this.loadOrCreateScan(settings, opts.limit);
-      // Loaded once per run: changes to close people apply on Review and Apply without a rescan.
-      const close = await loadCloseSet(store);
-      // Until Sent mail is counted, nobody is known to be close: personal mail stays unchecked (kept).
-      const closeKnown = (await store.getSenderStats()) !== null;
+      // Loaded once per run. Until Sent mail is fully counted for this account, nobody is known to be
+      // close: personal mail stays unchecked (kept) and Jev isn't asked about it.
+      const close = await loadCloseContext(store, await currentAccount(gmail));
       const replied = new Set(scan.repliedThreadIds);
       const pace = new Pace();
       let signInExpired = false;
@@ -152,12 +151,18 @@ export class ScanEngine {
                 this.set({ costUsd: this.progress.costUsd + answers.inputTokens * JEV_USD_PER_TOKEN });
               }
               // Personal mail from someone not close gets one more question; everything else is never asked.
-              if (answers && closeKnown && needsSignificance(flagsOf(summary, close), answers, settings, this.now())) {
-                const s = await judgeSignificance(facts);
-                answers = { ...answers, significance: s.meaningful };
-                await store.putAnswers(id, answers);
+              if (answers && needsSignificance(flagsOf(summary, close), answers, settings, this.now())) {
+                try {
+                  const s = await judgeSignificance(facts);
+                  answers = { ...answers, significance: s.meaningful };
+                  await store.putAnswers(id, answers);
+                  this.set({ costUsd: this.progress.costUsd + s.inputTokens * JEV_USD_PER_TOKEN });
+                } catch (err) {
+                  if (isSignInExpired(err) || isRunLevelError(err)) throw err;
+                  // The email stays kept as unchecked; the next scan asks again.
+                  console.error(`significance check failed for ${id}`, err);
+                }
                 networked = true;
-                this.set({ costUsd: this.progress.costUsd + s.inputTokens * JEV_USD_PER_TOKEN });
               }
               consecutiveFailures = 0;
             } catch (err) {

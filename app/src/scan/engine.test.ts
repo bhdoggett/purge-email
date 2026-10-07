@@ -7,6 +7,7 @@ import { GmailError } from "../gmail/client.ts";
 import { openStore, type Store } from "../storage/db.ts";
 import { testKey } from "../test/key.ts";
 import { isRunLevelError, ScanEngine } from "./engine.ts";
+import { countSent } from "./closeness.ts";
 import { createFakeGmail, fakeAnswers, makeSummary } from "./fakes.ts";
 
 async function setup(messages = [makeSummary("promo"), makeSummary("mom"), makeSummary("att", { attachmentNames: ["a.pdf"] })], extra: { concurrency?: number; now?: () => number } = {}) {
@@ -299,7 +300,7 @@ describe("ScanEngine", () => {
     ];
 
     /** Sent mail counted, so the app knows who is close. */
-    const counted = (store: Store) => store.putSenderStats({ ownAddress: "me@gmail.com", counted: [], people: [] });
+    const counted = (store: Store) => store.putSenderStats({ ownAddress: "me@gmail.com", counted: [], people: [], complete: true });
 
     it("asks only personal emails from people who aren't close, labels the trivial ones, and adds the cost", async () => {
       const { engine, store, judge, judgeSignificance } = await setup(mail());
@@ -328,6 +329,52 @@ describe("ScanEngine", () => {
       expect(judgeSignificance).toHaveBeenCalledTimes(2);
     });
 
+    it("asks nothing after counting stopped part-way", async () => {
+      const { engine, store, gmail, judgeSignificance } = await setup(mail());
+      for (let i = 0; i < 250; i++) gmail.sent.set(`s${i}`, { to: "pal@x.com", cc: "", date: "" });
+      let calls = 0;
+      const real = gmail.getHeaders.bind(gmail);
+      gmail.getHeaders = async (id, names) => {
+        if (++calls > 220) throw new Error("down");
+        return real(id, names);
+      };
+      await expect(countSent(gmail, store, "me@gmail.com")).rejects.toThrow("down");
+      await engine.start(on);
+      expect(judgeSignificance).not.toHaveBeenCalled();
+      expect(engine.getProgress().recent.find((r) => r.id === "mom2")).toMatchObject({ decision: "keep", reason: "personal unchecked" });
+    });
+
+    it("asks nothing when the counts belong to another account", async () => {
+      const { engine, store, judgeSignificance } = await setup(mail());
+      await store.putSenderStats({ ownAddress: "other@gmail.com", counted: [], people: [], complete: true });
+      await engine.start(on);
+      expect(judgeSignificance).not.toHaveBeenCalled();
+    });
+
+    it("keeps the user's own sent reply to a close person without asking, and asks about one to someone who isn't", async () => {
+      const replies = [
+        makeSummary("r1", { from: "Me <me@gmail.com>", to: "Mom <mom@x.com>", subject: "subject mom reply", labels: ["SENT"] }),
+        makeSummary("r2", { from: "Me <me@gmail.com>", to: "Old Friend <pal@x.com>", subject: "subject mom pal reply", labels: ["SENT"] }),
+      ];
+      const { engine, store, judgeSignificance } = await setup(replies);
+      await counted(store);
+      await store.putCloseChoices({ "mom@x.com": true });
+      await engine.start(on);
+      expect(judgeSignificance).toHaveBeenCalledTimes(1);
+      expect(judgeSignificance.mock.calls[0]![0]).toMatchObject({ to: "Old Friend <pal@x.com>" });
+      const p = engine.getProgress();
+      expect(p.recent.find((r) => r.id === "r1")).toMatchObject({ decision: "keep", label: null, reason: "close person" });
+      expect(p.recent.find((r) => r.id === "r2")).toMatchObject({ decision: "purge", label: "purge/personal" });
+    });
+
+    it("never asks about mail from a sender it can't read, and keeps it", async () => {
+      const { engine, store, judgeSignificance } = await setup([makeSummary("x", { from: "Mom", subject: "subject mom" })]);
+      await counted(store);
+      await engine.start(on);
+      expect(judgeSignificance).not.toHaveBeenCalled();
+      expect(engine.getProgress().recent[0]).toMatchObject({ decision: "keep", reason: "sender unknown" });
+    });
+
     it("never asks when the setting is off", async () => {
       const { engine, judgeSignificance } = await setup(mail());
       await engine.start(DEFAULT_SETTINGS);
@@ -347,13 +394,14 @@ describe("ScanEngine", () => {
       expect(judgeSignificance).toHaveBeenCalledTimes(2);
     });
 
-    it("leaves the email kept and unchecked when the question fails", async () => {
+    it("leaves the email kept and unchecked when the question fails, counting it as kept", async () => {
       const { engine, store, judgeSignificance } = await setup([mail()[1]!]);
       await counted(store);
       judgeSignificance.mockRejectedValueOnce(new Error("busy"));
       await engine.start(on);
       expect((await store.getAnswers("mom2"))?.significance).toBeUndefined();
-      expect(engine.getProgress().counts.failed).toBe(1);
+      expect(engine.getProgress().counts).toEqual({ purge: 0, keep: 1, review: 0, maybe: 0, failed: 0 });
+      expect(engine.getProgress().recent[0]).toMatchObject({ decision: "keep", reason: "personal unchecked" });
       await engine.start(on);
       expect((await store.getAnswers("mom2"))?.significance).toBe(0.1);
     });

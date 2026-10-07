@@ -1,6 +1,12 @@
 import type { Answers } from "@core/questions.ts";
 import { QUESTIONS_VERSION } from "@core/questions.ts";
 import type { Gmail, Summary } from "../gmail/client.ts";
+import type { CloseContext } from "./closeness.ts";
+
+/** A known close list for the fake account me@gmail.com, holding `addresses`. */
+export function knownClose(addresses: string[] = []): CloseContext {
+  return { close: new Set(addresses), own: "me@gmail.com", known: true };
+}
 
 export function makeSummary(id: string, overrides: Partial<Summary> = {}): Summary {
   return { id, threadId: `t-${id}`, from: `sender ${id}`, to: "me", cc: "", subject: `subject ${id}`, date: "2014", snippet: "", labels: [], hasListUnsubscribe: false, attachmentNames: [], ...overrides };

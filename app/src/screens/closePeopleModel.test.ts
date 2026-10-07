@@ -6,6 +6,7 @@ const person = (address: string, name: string, sent: number, years: number[]) =>
 const stats: SenderStats = {
   ownAddress: "me@gmail.com",
   counted: [],
+  complete: true,
   people: [person("bo@x.com", "Bo Lee", 3, [2020]), person("ann@x.com", "Ann Smith", 214, [2010, 2011, 2012]), person("cy@y.org", "", 12, [2019, 2020])],
 };
 

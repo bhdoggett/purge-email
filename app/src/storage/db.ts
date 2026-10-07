@@ -53,6 +53,8 @@ export interface SenderStats {
   ownAddress: string;
   counted: string[];
   people: SenderStat[];
+  /** Every sent email was counted at least once; false while a first count is unfinished. */
+  complete: boolean;
 }
 
 /** A summary at rest: everything but the id is encrypted. */

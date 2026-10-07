@@ -12,15 +12,15 @@ function answers(kind: Partial<Answers["kind"]>, protect: Partial<Answers["prote
 }
 const NOW = new Date(2026, 9, 7, 12).getTime();
 const OLD = new Date(2010, 0, 1).getTime();
-const plain = { starred: false, attachmentCount: 0, receivedAt: OLD, senderClose: false };
+const plain = { starred: false, attachmentCount: 0, receivedAt: OLD, senderClose: false, closeKnown: true };
 
 describe("decide", () => {
   it("keeps starred mail regardless of answers", () => {
-    expect(decide({ starred: true, attachmentCount: 0, receivedAt: OLD, senderClose: false }, answers({ promotion: 1 }), DEFAULT_SETTINGS, NOW).decision).toBe("keep");
+    expect(decide({ starred: true, attachmentCount: 0, receivedAt: OLD, senderClose: false, closeKnown: true }, answers({ promotion: 1 }), DEFAULT_SETTINGS, NOW).decision).toBe("keep");
   });
 
   it("keeps mail with attachments regardless of answers", () => {
-    const r = decide({ starred: false, attachmentCount: 2, receivedAt: OLD, senderClose: false }, answers({ promotion: 1 }), DEFAULT_SETTINGS, NOW);
+    const r = decide({ starred: false, attachmentCount: 2, receivedAt: OLD, senderClose: false, closeKnown: true }, answers({ promotion: 1 }), DEFAULT_SETTINGS, NOW);
     expect(r).toEqual({ decision: "keep", reason: "attachment" });
   });
 
@@ -66,7 +66,7 @@ describe("decide", () => {
 
   it("judges starred and attachment mail normally when protection is off", () => {
     const s = { ...DEFAULT_SETTINGS, keepStarred: false, keepAttachments: false };
-    expect(decide({ starred: true, attachmentCount: 1, receivedAt: OLD, senderClose: false }, answers({ promotion: 0.95 }), s, NOW).decision).toBe("purge");
+    expect(decide({ starred: true, attachmentCount: 1, receivedAt: OLD, senderClose: false, closeKnown: true }, answers({ promotion: 0.95 }), s, NOW).decision).toBe("purge");
   });
 });
 
@@ -95,8 +95,8 @@ describe("decide: age", () => {
   });
 
   it("checks starred and attachments before age", () => {
-    expect(decide({ starred: true, attachmentCount: 0, receivedAt: NOW, senderClose: false }, promo, sixMonths, NOW).reason).toBe("starred");
-    expect(decide({ starred: false, attachmentCount: 1, receivedAt: NOW, senderClose: false }, promo, sixMonths, NOW).reason).toBe("attachment");
+    expect(decide({ starred: true, attachmentCount: 0, receivedAt: NOW, senderClose: false, closeKnown: true }, promo, sixMonths, NOW).reason).toBe("starred");
+    expect(decide({ starred: false, attachmentCount: 1, receivedAt: NOW, senderClose: false, closeKnown: true }, promo, sixMonths, NOW).reason).toBe("attachment");
   });
 
   it("checks age before judging", () => {
@@ -202,6 +202,18 @@ describe("decide: trivial personal mail", () => {
     expect(decide(plain, trivial, on, NOW)).toEqual({ decision: "keep", reason: "purge score 0.00" });
   });
 
+  it("keeps personal mail from an unknown sender, and never asks about it", () => {
+    expect(decide({ ...plain, senderClose: null }, personal(0.01), on, NOW)).toEqual({ decision: "keep", reason: "sender unknown" });
+    expect(needsSignificance({ ...plain, senderClose: null }, personal(), on, NOW)).toBe(false);
+  });
+
+  it("keeps personal mail unchecked while the close list isn't known, and never asks about it", () => {
+    const unknown = { ...plain, closeKnown: false };
+    expect(decide(unknown, personal(0.01), on, NOW)).toEqual({ decision: "keep", reason: "personal unchecked" });
+    expect(decide({ ...unknown, senderClose: true }, personal(0.01), on, NOW).reason).toBe("personal unchecked");
+    expect(needsSignificance(unknown, personal(), on, NOW)).toBe(false);
+  });
+
   it("lets financial and account protects win first", () => {
     expect(decide(plain, personal(0.05, { financial: 0.6 }), on, NOW)).toEqual({ decision: "keep", reason: "financial 0.60" });
     expect(decide(plain, personal(0.05, { accountLegal: 0.8 }), on, NOW)).toEqual({ decision: "keep", reason: "accountLegal 0.80" });
@@ -222,6 +234,7 @@ describe("decide: trivial personal mail", () => {
   it("behaves as before when the setting is off", () => {
     expect(decide(plain, personal(0.05), DEFAULT_SETTINGS, NOW)).toEqual({ decision: "keep", reason: "personal 0.90" });
     expect(decide({ ...plain, senderClose: true }, answers({ promotion: 0.95 }), DEFAULT_SETTINGS, NOW).decision).toBe("purge");
+    expect(decide({ ...plain, senderClose: null, closeKnown: false }, personal(0.05), DEFAULT_SETTINGS, NOW)).toEqual({ decision: "keep", reason: "personal 0.90" });
     const unprotected: Settings = { ...DEFAULT_SETTINGS, protects: [] };
     expect(decide(plain, { ...answers({ promotion: 0.95 }, { personal: 0.9 }), significance: 0.01 }, unprotected, NOW)).toEqual({ decision: "purge", reason: "promotion 0.95" });
   });

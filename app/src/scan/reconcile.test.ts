@@ -5,7 +5,8 @@ import type { Answers } from "@core/questions.ts";
 import type { Summary } from "../gmail/client.ts";
 import { type LabelRecord, openStore } from "../storage/db.ts";
 import { testKey } from "../test/key.ts";
-import { createFakeGmail, fakeAnswers, idsWithLabel, makeSummary } from "./fakes.ts";
+import { NO_CLOSE } from "./closeness.ts";
+import { createFakeGmail, fakeAnswers, idsWithLabel, knownClose, makeSummary } from "./fakes.ts";
 import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
 import { appLabelNames } from "@core/labels.ts";
@@ -36,7 +37,7 @@ function input(answers: Record<string, Answers>, rest: Partial<ReconcileInput> =
     anywhere: new Map(),
     live: new Set(),
     overrides: new Map(),
-    close: new Set(),
+    close: NO_CLOSE,
     ...rest,
   };
 }
@@ -859,28 +860,46 @@ describe("trivial personal mail and close people", () => {
   const summaries = new Map([["a", makeSummary("a", { from: "Ann <ann@x.com>" })]]);
 
   it("labels a trivial personal email from someone not close purge/personal", () => {
-    const plan = planReconcile(input({ a: trivial }, { settings: on, summaries }));
+    const plan = planReconcile(input({ a: trivial }, { settings: on, summaries, close: knownClose() }));
     expect(plan.add).toEqual(new Map([["purge/personal", ["a"]]]));
   });
 
   it("removes that label on the next plan once the sender is close, with no rescan", () => {
-    const plan = planReconcile(input({ a: trivial }, { settings: on, summaries, records: new Map([["a", rec("a", "purge/personal")]]), ...labeled({ a: "purge/personal" }), close: new Set(["ann@x.com"]) }));
+    const plan = planReconcile(input({ a: trivial }, { settings: on, summaries, records: new Map([["a", rec("a", "purge/personal")]]), ...labeled({ a: "purge/personal" }), close: knownClose(["ann@x.com"]) }));
     expect(plan.remove).toEqual(new Map([["purge/personal", ["a"]]]));
     expect(plan.add.size).toBe(0);
     expect(plan.del).toEqual(["a"]);
   });
 
-  it("reads the close set from the store in summarize and previewReconcile", async () => {
+  it("reads the close set from the store in summarize and previewReconcile, for the signed-in account only", async () => {
     const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     const gmail = createFakeGmail([summaries.get("a")!]);
     await store.putSummary(summaries.get("a")!);
     await store.putAnswers("a", trivial);
     await store.putScan({ ageMonths: 120, settings: on, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 1, settingsAtScan: on, msPerEmail: null });
-    expect(await summarize(store, on, NOW)).toEqual({ purge: 1, keep: 0, review: 0 });
+    // Not counted yet: personal mail is kept.
+    expect(await summarize(store, on, NOW, "me@gmail.com")).toEqual({ purge: 0, keep: 1, review: 0 });
+    expect((await previewReconcile({ gmail, store, now: () => NOW }, on)).plan.add.size).toBe(0);
+
+    await store.putSenderStats({ ownAddress: "me@gmail.com", counted: [], people: [], complete: true });
+    expect(await summarize(store, on, NOW, "me@gmail.com")).toEqual({ purge: 1, keep: 0, review: 0 });
     expect((await previewReconcile({ gmail, store, now: () => NOW }, on)).plan.add).toEqual(new Map([["purge/personal", ["a"]]]));
+    // Counts from another account count as none.
+    expect(await summarize(store, on, NOW, "other@gmail.com")).toEqual({ purge: 0, keep: 1, review: 0 });
+    expect(await summarize(store, on, NOW)).toEqual({ purge: 0, keep: 1, review: 0 });
 
     await store.putCloseChoices({ "ann@x.com": true });
-    expect(await summarize(store, on, NOW)).toEqual({ purge: 0, keep: 1, review: 0 });
+    expect(await summarize(store, on, NOW, "me@gmail.com")).toEqual({ purge: 0, keep: 1, review: 0 });
+    expect((await previewReconcile({ gmail, store, now: () => NOW }, on)).plan.add.size).toBe(0);
+  });
+
+  it("keeps everything personal when the counts are from another account", async () => {
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
+    const gmail = createFakeGmail([summaries.get("a")!]);
+    await store.putSummary(summaries.get("a")!);
+    await store.putAnswers("a", trivial);
+    await store.putScan({ ageMonths: 120, settings: on, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 1, settingsAtScan: on, msPerEmail: null });
+    await store.putSenderStats({ ownAddress: "other@gmail.com", counted: [], people: [], complete: true });
     expect((await previewReconcile({ gmail, store, now: () => NOW }, on)).plan.add.size).toBe(0);
   });
 

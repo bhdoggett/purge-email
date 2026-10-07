@@ -51,6 +51,10 @@ function cleanName(raw: string): string {
  * valid address, no-reply addresses, and `own` (the account's own address) are left out.
  */
 export function parseAddresses(header: string, own?: string): { address: string; name: string }[] {
+  return readAddresses(header, own, true);
+}
+
+function readAddresses(header: string, own: string | undefined, skipNoReply: boolean): { address: string; name: string }[] {
   const out: { address: string; name: string }[] = [];
   const ownLower = own?.toLowerCase();
   for (const part of splitList(header)) {
@@ -68,15 +72,15 @@ export function parseAddresses(header: string, own?: string): { address: string;
       address = ADDRESS_IN_TEXT.exec(text)?.[0] ?? "";
     }
     address = address.toLowerCase();
-    if (!ADDRESS.test(address) || NO_REPLY.test(address) || address === ownLower) continue;
+    if (!ADDRESS.test(address) || (skipNoReply && NO_REPLY.test(address)) || address === ownLower) continue;
     out.push({ address, name });
   }
   return out;
 }
 
-/** The sender's address of a From header, lowercase, or null when it can't be read. */
+/** The sender's address of a From header, lowercase (no-reply addresses included), or null when it can't be read. */
 export function senderAddress(from: string): string | null {
-  return parseAddresses(from)[0]?.address ?? null;
+  return readAddresses(from, undefined, false)[0]?.address ?? null;
 }
 
 /**
@@ -94,10 +98,36 @@ export function closeSet(stats: SenderStats | null, choices: Record<string, bool
 
 export const isAutoClose = (p: Pick<SenderStat, "sent" | "years">): boolean => p.sent >= CLOSE_MIN_SENT && p.years.length >= CLOSE_MIN_YEARS;
 
-/** The close set from what the store holds; empty when nothing was counted or chosen. */
-export async function loadCloseSet(store: Store): Promise<Set<string>> {
+/** Who is close, as every decision needs it. */
+export interface CloseContext {
+  /** Lowercase addresses of close people; empty unless `known`. */
+  close: ReadonlySet<string>;
+  /** The signed-in account's address the counts belong to, or null unless `known`. */
+  own: string | null;
+  /** Sent mail is fully counted for the signed-in account. Until then nobody can be ruled out as close. */
+  known: boolean;
+}
+
+export const NO_CLOSE: CloseContext = { close: new Set(), own: null, known: false };
+
+/**
+ * The close list from what the store holds, for `account` (the signed-in address). Counts that are
+ * missing, unfinished, or from another account give NO_CLOSE.
+ */
+export async function loadCloseContext(store: Store, account: string | null): Promise<CloseContext> {
   const [stats, choices] = await Promise.all([store.getSenderStats(), store.getCloseChoices()]);
-  return closeSet(stats, choices);
+  const own = account?.toLowerCase() ?? null;
+  if (!stats || stats.complete !== true || own === null || stats.ownAddress !== own) return NO_CLOSE;
+  return { close: closeSet(stats, choices), own, known: true };
+}
+
+/** The signed-in Gmail address, lowercase, or null when Gmail can't say (then nobody is known to be close). */
+export async function currentAccount(gmail: Gmail): Promise<string | null> {
+  try {
+    return (await gmail.getProfile()).emailAddress.toLowerCase();
+  } catch {
+    return null;
+  }
 }
 
 function addMessage(people: Map<string, SenderStat>, headers: Record<string, string>, own: string): void {
@@ -133,7 +163,9 @@ export async function countSent(
   const own = ownAddress.toLowerCase();
   const saved = await store.getSenderStats();
   // Counts from another account (signed in as someone else since) start over.
-  const base = saved && saved.ownAddress === own ? saved : { ownAddress: own, counted: [], people: [] };
+  const base: SenderStats = saved && saved.ownAddress === own ? saved : { ownAddress: own, counted: [], people: [], complete: false };
+  // A recount of complete counts stays complete while it reads new mail; a first count is complete only at the end.
+  const wasComplete = base.complete === true;
   const counted = new Set(base.counted);
   const people = new Map(base.people.map((p) => [p.address, { ...p, years: [...p.years] }]));
 
@@ -143,7 +175,7 @@ export async function countSent(
   let done = total - todo.length;
   onProgress?.(done, total);
 
-  const snapshot = (): SenderStats => ({ ownAddress: own, counted: [...counted], people: [...people.values()] });
+  const snapshot = (complete: boolean): SenderStats => ({ ownAddress: own, counted: [...counted], people: [...people.values()], complete });
   const run = pLimit(opts.concurrency ?? 4);
   for (let i = 0; i < todo.length; i += COUNT_BATCH) {
     const batch = todo.slice(i, i + COUNT_BATCH);
@@ -170,9 +202,9 @@ export async function countSent(
       addMessage(people, headers, own);
       counted.add(batch[j]!);
     });
-    await store.putSenderStats(snapshot());
+    await store.putSenderStats(snapshot(wasComplete));
   }
-  const stats = snapshot();
-  if (todo.length === 0) await store.putSenderStats(stats);
+  const stats = snapshot(true);
+  await store.putSenderStats(stats);
   return stats;
 }
