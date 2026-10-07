@@ -63,6 +63,11 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
   function confirm() {
     const job = pending;
     setPending(null);
+    if (engine.isBusy()) {
+      setMessage(null);
+      setError("Another job is running. Wait for it to finish.");
+      return;
+    }
     void (job === "trash" ? engine.trashLabeled() : engine.emptySpam());
     go("scan");
   }
@@ -97,6 +102,7 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
 
       <div className={styles.actions}>
         <Button onClick={() => void openUrl(`https://mail.google.com/mail/u/0/#label/${encodeURIComponent(labelName)}`)}>Open in Gmail</Button>
+        <Button variant="secondary" onClick={() => go("rules")}>Change rules</Button>
         {changed && (
           <Button variant="secondary" disabled={updating} onClick={() => void updateLabels()}>
             {updating ? "Updating labels…" : "Update labels to match new rules"}
