@@ -1,5 +1,5 @@
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Settings } from "@core/decide.ts";
 import type { Screen } from "../App.tsx";
 import { Button } from "../components/Button.tsx";
@@ -7,6 +7,7 @@ import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
 import { countByLabel, reconcile, summarize } from "../scan/reconcile.ts";
 import type { Services } from "../services.ts";
 import { buildRows, gmailLabelUrl, labelsWarning, type ReviewRow, scanState, type ScanState, SETTLING_NOTE, totalOf, updateMessage } from "./reviewModel.ts";
+import { useProgress } from "../useProgress.ts";
 import styles from "./Review.module.css";
 
 interface Loaded {
@@ -27,6 +28,15 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
+  // Re-render when a scan starts or stops, so the busy note and buttons stay current.
+  const progress = useProgress(engine);
+  const scanning = engine.isBusy();
+  const wasScanning = useRef(scanning);
+  useEffect(() => {
+    // A scan that just finished changed the labels: reload the counts.
+    if (wasScanning.current && !scanning) void load();
+    wasScanning.current = scanning;
+  }, [scanning, progress.stage]);
 
   async function load() {
     try {
@@ -55,6 +65,12 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
   async function updateLabels() {
     // Never reconcile without a finished scan: with no candidates it would strip every label.
     if (!data || updating || data.state.action !== "update") return;
+    // Reconciling while a scan is labeling would race the scan's own writes.
+    if (engine.isBusy()) {
+      setMessage(null);
+      setError("A scan is running. Update labels after it finishes.");
+      return;
+    }
     setUpdating(true);
     setMessage(null);
     try {
@@ -111,17 +127,26 @@ export function Review({ services, go }: { services: Services; go: (s: Screen) =
         enough: selecting all and deleting in Gmail deletes everything under the label, starred mail included. Jev left the rest unlabeled.
       </p>
 
+      {scanning && (
+        <p className={styles.note} role="status">
+          A scan is running, so these numbers are still changing. They update when it finishes.{" "}
+          <button type="button" className={styles.linkButton} onClick={() => go("scan")}>
+            See progress
+          </button>
+        </p>
+      )}
+
       {warning && (
         <div className={styles.warning} role="alert">
           <p className={styles.warningText}>{warning}</p>
           {state.action === "update" && state.settling && <p>{SETTLING_NOTE}</p>}
           {state.action === "update" && (
-            <Button disabled={updating} onClick={() => void updateLabels()}>
+            <Button disabled={updating || scanning} onClick={() => void updateLabels()}>
               {updating ? "Updating labels…" : "Update labels"}
             </Button>
           )}
-          {state.action === "rescan" && <Button onClick={scan}>Rescan</Button>}
-          {state.action === "scan" && <Button onClick={scan}>Scan now</Button>}
+          {state.action === "rescan" && <Button disabled={scanning} onClick={scan}>Rescan</Button>}
+          {state.action === "scan" && <Button disabled={scanning} onClick={scan}>Scan now</Button>}
         </div>
       )}
 
