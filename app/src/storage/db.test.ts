@@ -30,13 +30,18 @@ describe("store", () => {
     expect((await store.allLabels()).size).toBe(0);
   });
 
-  it("clearScanData keeps settings and wizard progress", async () => {
+  it("clearScanData keeps settings, wizard progress, and label records", async () => {
     const store = await openStore(`t-${crypto.randomUUID()}`);
     await store.putSummary(summary);
+    await store.putAnswers("m1", answers);
+    await store.putLabels([{ id: "m1", labeledByApp: true, userRemoved: true }]);
     await store.putSettings({ ...DEFAULT_SETTINGS, years: 7 });
     await store.putWizard([1]);
     await store.clearScanData();
     expect(await store.getSummary("m1")).toBeUndefined();
+    expect((await store.allAnswers()).size).toBe(0);
+    expect(await store.getScan()).toBeNull();
+    expect((await store.allLabels()).get("m1")?.userRemoved).toBe(true);
     expect((await store.getSettings()).years).toBe(7);
     expect(await store.getWizard()).toEqual([1]);
   });

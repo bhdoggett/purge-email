@@ -44,7 +44,7 @@ export function Settings({ services, email, onChanged, onBack }: { services: Ser
       <div className={styles.row}>
         <div>
           <h2 className={styles.subheading}>Scan data</h2>
-          <p className={styles.muted}>Forgets saved Jev answers. The next scan pays for Jev again. Labels in Gmail stay.</p>
+          <p className={styles.muted}>Forgets the saved emails and Jev answers, so the next scan pays for Jev again. Labels in Gmail stay, and the app still remembers which labels you removed so it won't add them back.</p>
         </div>
         <Button variant="secondary" disabled={busy} onClick={() => act(() => services.store.clearScanData(), "Scan data cleared.")}>Clear scan data</Button>
       </div>

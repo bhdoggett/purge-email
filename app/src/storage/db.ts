@@ -44,6 +44,7 @@ export interface Store {
   putScan(s: ScanRecord): Promise<void>;
   getWizard(): Promise<number[]>;
   putWizard(done: number[]): Promise<void>;
+  /** Forgets summaries, Jev answers, and the scan. Keeps label records so user removals are remembered. */
   clearScanData(): Promise<void>;
 }
 
@@ -89,11 +90,10 @@ export async function openStore(name = "purge-email"): Promise<Store> {
     getWizard: async () => ((await db.get("kv", "wizard")) as number[] | undefined) ?? [],
     putWizard: async (done) => void (await db.put("kv", done, "wizard")),
     async clearScanData() {
-      const tx = db.transaction(["summaries", "answers", "labels", "kv"], "readwrite");
+      const tx = db.transaction(["summaries", "answers", "kv"], "readwrite");
       await Promise.all([
         tx.objectStore("summaries").clear(),
         tx.objectStore("answers").clear(),
-        tx.objectStore("labels").clear(),
         tx.objectStore("kv").delete("scan"),
         tx.done,
       ]);
