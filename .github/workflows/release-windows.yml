@@ -1,0 +1,58 @@
+name: Release (Windows)
+
+# Builds the Windows installers and attaches them to the GitHub release for the tag.
+# Runs on every version tag push, or by hand for an existing tag (Actions → Run workflow).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to build, e.g. v0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            app/package-lock.json
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri -> target
+
+      # core/ (shared with the CLI) resolves its packages from the root node_modules.
+      - name: Install dependencies
+        run: |
+          npm ci
+          npm ci --prefix app
+
+      - name: Test
+        run: npm --prefix app test
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tagName: ${{ env.TAG }}
+          releaseName: ${{ env.TAG }}
+          releaseDraft: false
+          prerelease: false
