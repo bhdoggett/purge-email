@@ -1,0 +1,13 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "notification:default",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [{ "url": "https://*.google.com/*" }, { "url": "https://*.typesafe.ai/*" }, { "url": "https://typesafe.ai/*" }]
+    }
+  ]
+}

@@ -1,0 +1,113 @@
+import { type DBSchema, openDB } from "idb";
+import { DEFAULT_SETTINGS, type Settings } from "@core/decide.ts";
+import type { Answers } from "@core/questions.ts";
+import type { Summary } from "../gmail/client.ts";
+
+export interface LabelRecord {
+  id: string;
+  label: string;
+  labeledAt: number;
+  userRemoved: boolean;
+  userChosen: boolean;
+}
+
+export interface ScanRecord {
+  years: number;
+  /** Settings the candidate list was built with; missing on scans saved before category labels. */
+  settings?: Settings;
+  candidateIds: string[];
+  repliedThreadIds: string[];
+  finished: boolean;
+  startedAt: number;
+  /** Settings the labels currently in Gmail were computed with; null until a scan finishes. */
+  settingsAtScan: Settings | null;
+  /** Label changes the last reconcile held back because Gmail's lists hadn't caught up yet. */
+  deferred?: number;
+  /** Measured average ms per email for emails that needed Gmail and Jev calls. */
+  msPerEmail: number | null;
+}
+
+interface PurgeDB extends DBSchema {
+  summaries: { key: string; value: Summary };
+  answers: { key: string; value: Answers };
+  labels: { key: string; value: LabelRecord };
+  kv: { key: string; value: unknown };
+}
+
+export interface Store {
+  getSummary(id: string): Promise<Summary | undefined>;
+  putSummary(s: Summary): Promise<void>;
+  getAnswers(id: string): Promise<Answers | undefined>;
+  putAnswers(id: string, a: Answers): Promise<void>;
+  allSummaries(): Promise<Map<string, Summary>>;
+  allAnswers(): Promise<Map<string, Answers>>;
+  allLabels(): Promise<Map<string, LabelRecord>>;
+  putLabels(recs: LabelRecord[]): Promise<void>;
+  deleteLabels(ids: string[]): Promise<void>;
+  getSettings(): Promise<Settings>;
+  putSettings(s: Settings): Promise<void>;
+  getScan(): Promise<ScanRecord | null>;
+  putScan(s: ScanRecord): Promise<void>;
+  getWizard(): Promise<number[]>;
+  putWizard(done: number[]): Promise<void>;
+  /** Forgets summaries, Jev answers, and the scan. Keeps label records so user removals are remembered. */
+  clearScanData(): Promise<void>;
+}
+
+export async function openStore(name = "purge-email", defaults: Settings = DEFAULT_SETTINGS): Promise<Store> {
+  const db = await openDB<PurgeDB>(name, 2, {
+    async upgrade(db, oldVersion, _newVersion, tx) {
+      if (oldVersion < 1) {
+        db.createObjectStore("summaries", { keyPath: "id" });
+        db.createObjectStore("answers");
+        db.createObjectStore("labels", { keyPath: "id" });
+        db.createObjectStore("kv");
+      } else if (oldVersion < 2) {
+        // v1 records have no `label`; they only exist from development, so drop them.
+        await tx.objectStore("labels").clear();
+      }
+    },
+  });
+
+  async function allAsMap<K extends "answers">(store: K) {
+    const tx = db.transaction(store);
+    const map = new Map<string, PurgeDB[K]["value"]>();
+    for (let cursor = await tx.store.openCursor(); cursor; cursor = await cursor.continue()) {
+      map.set(cursor.key as string, cursor.value);
+    }
+    return map;
+  }
+
+  return {
+    getSummary: (id) => db.get("summaries", id),
+    putSummary: async (s) => void (await db.put("summaries", s)),
+    getAnswers: (id) => db.get("answers", id),
+    putAnswers: async (id, a) => void (await db.put("answers", a, id)),
+    allSummaries: async () => new Map((await db.getAll("summaries")).map((s) => [s.id, s])),
+    allAnswers: () => allAsMap("answers"),
+    allLabels: async () => new Map((await db.getAll("labels")).map((l) => [l.id, l])),
+    async putLabels(recs) {
+      const tx = db.transaction("labels", "readwrite");
+      await Promise.all([...recs.map((r) => tx.store.put(r)), tx.done]);
+    },
+    async deleteLabels(ids) {
+      const tx = db.transaction("labels", "readwrite");
+      await Promise.all([...ids.map((id) => tx.store.delete(id)), tx.done]);
+    },
+    getSettings: async () => ({ ...defaults, ...((await db.get("kv", "settings")) as Partial<Settings> | undefined) }),
+    putSettings: async (s) => void (await db.put("kv", s, "settings")),
+    getScan: async () => ((await db.get("kv", "scan")) as ScanRecord | undefined) ?? null,
+    putScan: async (s) => void (await db.put("kv", s, "scan")),
+    getWizard: async () => ((await db.get("kv", "wizard")) as number[] | undefined) ?? [],
+    putWizard: async (done) => void (await db.put("kv", done, "wizard")),
+    async clearScanData() {
+      const tx = db.transaction(["summaries", "answers", "kv"], "readwrite");
+      await Promise.all([
+        tx.objectStore("summaries").clear(),
+        tx.objectStore("answers").clear(),
+        tx.objectStore("kv").delete("scan"),
+        tx.done,
+      ]);
+    },
+  };
+}

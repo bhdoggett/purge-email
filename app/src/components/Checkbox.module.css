@@ -1,0 +1,25 @@
+.row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+.input {
+  width: 18px;
+  height: 18px;
+  margin-top: 3px;
+  accent-color: var(--color-accent);
+}
+.label {
+  font-weight: 600;
+}
+.locked {
+  color: var(--color-muted);
+  font-weight: 400;
+}
+.description {
+  grid-column: 2;
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}

@@ -1,0 +1,22 @@
+.welcome {
+  max-width: 60ch;
+  margin: var(--space-6) auto;
+  padding: 0 var(--space-5);
+}
+.heading {
+  font-family: var(--font-display);
+  font-size: var(--text-2xl);
+  line-height: 1.15;
+  margin: 0 0 var(--space-4);
+}
+.lede {
+  font-size: var(--text-lg);
+  color: var(--color-muted);
+}
+.promises {
+  padding-left: var(--space-5);
+  margin: var(--space-5) 0 var(--space-6);
+}
+.promises li {
+  margin-bottom: var(--space-2);
+}

@@ -1,0 +1,29 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0ms !important;
+    animation-duration: 0ms !important;
+  }
+}

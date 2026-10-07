@@ -1,0 +1,39 @@
+.feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--color-border);
+}
+.item {
+  display: grid;
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--text-sm);
+}
+.who,
+.subject {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.who {
+  font-weight: 600;
+}
+.decision {
+  font-weight: 600;
+}
+.reason {
+  font-weight: 400;
+  color: var(--color-muted);
+}
+.purge {
+  color: var(--color-purge);
+}
+.keep {
+  color: var(--color-keep);
+}
+.review {
+  color: var(--color-review);
+}
