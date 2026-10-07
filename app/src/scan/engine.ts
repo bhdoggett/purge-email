@@ -256,6 +256,7 @@ export class ScanEngine {
       const run = pLimit(this.deps.concurrency ?? 4);
       let signInExpired = false;
       let fatal: unknown = null;
+      let consecutiveFailures = 0;
       await settleAll(
         ids.map((id) =>
           run(async () => {
@@ -263,6 +264,7 @@ export class ScanEngine {
             let failed = 0;
             try {
               await gmail.trash(id);
+              consecutiveFailures = 0;
             } catch (err) {
               if (isSignInExpired(err)) {
                 signInExpired = true;
@@ -276,6 +278,9 @@ export class ScanEngine {
               if (!(err instanceof GmailError && err.status === 404)) {
                 console.error(`trash failed for ${id}`, err);
                 failed = 1;
+                if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) fatal = err;
+              } else {
+                consecutiveFailures = 0;
               }
             }
             pace.mark(this.now());

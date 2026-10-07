@@ -258,4 +258,19 @@ describe("ScanEngine", () => {
     expect(engine.getProgress().stage).toBe("error");
     expect(judge.mock.calls.length).toBeLessThanOrEqual(4);
   });
+
+  it("stops trashing as error after 20 consecutive per-message failures", async () => {
+    const many = Array.from({ length: 40 }, (_, i) => makeSummary(`p${i}`));
+    const { gmail, engine, notify } = await setup(many);
+    for (const m of many) {
+      gmail.labeled.add(m.id);
+      gmail.trashErrors.set(m.id, new Error("nope"));
+    }
+    await engine.trashLabeled();
+    const p = engine.getProgress();
+    expect(p.stage).toBe("error");
+    expect((p.error as Error).message).toBe("nope");
+    expect(p.counts.failed).toBeLessThan(40);
+    expect(notify).not.toHaveBeenCalled();
+  });
 });
