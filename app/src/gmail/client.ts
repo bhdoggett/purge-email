@@ -78,6 +78,12 @@ async function toGmailError(res: Response): Promise<GmailError> {
   }
 }
 
+/** Gmail label names are case-insensitive: "Purge/News" and "purge/news" are the same label. */
+function findByName(labels: { id: string; name: string }[] | undefined, name: string): string | undefined {
+  const want = name.toLowerCase();
+  return labels?.find((l) => l.name.toLowerCase() === want)?.id;
+}
+
 export function createGmail(opts: GmailOptions): Gmail {
   const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const random = opts.random ?? Math.random;
@@ -165,7 +171,7 @@ export function createGmail(opts: GmailOptions): Gmail {
 
     async ensureLabel(name) {
       const res = await call<{ labels?: { id: string; name: string }[] }>("GET", "/labels");
-      const find = (n: string) => res.labels?.find((l) => l.name === n)?.id;
+      const find = (n: string) => findByName(res.labels, n);
       const create = async (n: string) =>
         (await call<{ id: string }>("POST", "/labels", { name: n, labelListVisibility: "labelShow", messageListVisibility: "show" })).id;
       // Gmail nests by name: make sure the parent exists before the child.
@@ -176,7 +182,7 @@ export function createGmail(opts: GmailOptions): Gmail {
 
     async findLabelId(name) {
       const res = await call<{ labels?: { id: string; name: string }[] }>("GET", "/labels");
-      return res.labels?.find((l) => l.name === name)?.id ?? null;
+      return findByName(res.labels, name) ?? null;
     },
 
     addLabel: (labelId, ids) => modify(labelId, ids, "addLabelIds"),

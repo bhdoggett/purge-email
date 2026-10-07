@@ -384,6 +384,22 @@ describe("countByLabel", () => {
     expect(await countByLabel(gmail, DEFAULT_SETTINGS)).toEqual(new Map([["purge/promotion", 1]]));
     expect(await countByLabel(gmail, { ...DEFAULT_SETTINGS, keepStarred: false })).toEqual(new Map([["purge/promotion", 2]]));
   });
+
+  it("reads by label id with no search text, subtracting the label-and-STARRED list", async () => {
+    const gmail = createFakeGmail([makeSummary("a"), makeSummary("b", { labels: ["STARRED"] })]);
+    gmail.labelsOf.set("a", new Set(["purge/promotion"]));
+    gmail.labelsOf.set("b", new Set(["purge/promotion"]));
+    gmail.labelsOf.set("s", new Set(["purge/scam"]));
+    const listIds = vi.spyOn(gmail, "listIds");
+    await countByLabel(gmail, DEFAULT_SETTINGS);
+    expect(listIds.mock.calls.every(([q]) => q === "")).toBe(true);
+    expect(listIds).toHaveBeenCalledWith("", Infinity, { labelIds: ["purge/promotion"] });
+    expect(listIds).toHaveBeenCalledWith("", Infinity, { labelIds: ["purge/promotion", "STARRED"] });
+
+    // A label holding only starred mail is left out when starred mail is protected.
+    gmail.labelsOf.set("a", new Set());
+    expect(await countByLabel(gmail, DEFAULT_SETTINGS)).toEqual(new Map([["purge/scam", 1]]));
+  });
 });
 
 describe("summarize", () => {

@@ -40,14 +40,16 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
     ages: new Map(),
     async listIds(q, limit = Infinity, opts) {
       let ids: { id: string; threadId: string }[];
+      // The STARRED system label comes from the message summary; the others from `labelsOf`.
+      const has = (id: string, set: Set<string>, n: string) => (n === "STARRED" ? (byId.get(id)?.labels.includes("STARRED") ?? false) : set.has(n));
       const withLabels = (names: string[], anywhere: boolean) =>
         [...fake.labelsOf]
-          .filter(([id, set]) => names.every((n) => set.has(n)) && (anywhere || !fake.trashed.has(id)) && !(q.includes("-is:starred") && byId.get(id)?.labels.includes("STARRED")))
+          .filter(([id, set]) => names.every((n) => has(id, set, n)) && (anywhere || !fake.trashed.has(id)))
           .map(([id]) => ({ id, threadId: id }));
-      if (opts?.labelIds) ids = withLabels(opts.labelIds, opts.includeSpamTrash ?? false);
-      else if (q.startsWith("in:sent")) ids = [];
-      // Text `label:` queries match by name until the engine switches to label ids.
-      else if (q.startsWith("label:")) ids = withLabels([/^label:(\S+)/.exec(q)![1]!], q.includes("in:anywhere"));
+      if (opts?.labelIds) {
+        if (q !== "") throw new Error(`the fake reads labels by id only, got q=${JSON.stringify(q)}`);
+        ids = withLabels(opts.labelIds, opts.includeSpamTrash ?? false);
+      } else if (q.startsWith("in:sent")) ids = [];
       else {
         const years = Number(/older_than:(\d+)y/.exec(q)?.[1] ?? 0);
         ids = messages.filter((m) => (fake.ages.get(m.id) ?? 20) >= years).map((m) => ({ id: m.id, threadId: m.threadId }));

@@ -218,13 +218,18 @@ export async function reconcile(
   return { added: added.size - moved, removed: removed.size - moved, moved, userRemoved: plan.userRemoved, userChosen: plan.userChosen, deferred: plan.deferred };
 }
 
-/** Message count per app label under the current prefix, skipping starred mail when it is protected. Labels with none are left out. */
+/**
+ * Message count per app label under the current prefix, skipping starred mail when it is protected.
+ * Read by label id only (no search text): starred mail is subtracted using the STARRED label id.
+ * Labels with none are left out.
+ */
 export async function countByLabel(gmail: Gmail, settings: Settings): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
   for (const name of appLabelNames(settings.labelPrefix)) {
     const labelId = await gmail.findLabelId(name);
     if (labelId === null) continue;
-    const n = (await gmail.listIds(settings.keepStarred ? "-is:starred" : "", Infinity, { labelIds: [labelId] })).length;
+    let n = (await gmail.listIds("", Infinity, { labelIds: [labelId] })).length;
+    if (settings.keepStarred && n > 0) n -= (await gmail.listIds("", Infinity, { labelIds: [labelId, "STARRED"] })).length;
     if (n > 0) counts.set(name, n);
   }
   return counts;

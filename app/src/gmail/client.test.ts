@@ -154,4 +154,20 @@ describe("gmail client", () => {
     expect(await gmail.findLabelId("y")).toBe("L9");
     expect(fetch.mock.calls.every((c) => (c[1] as RequestInit).method === "GET")).toBe(true);
   });
+
+  it("matches label names case-insensitively, like Gmail", async () => {
+    const fetch = vi.fn().mockImplementation(async () => json(200, { labels: [{ id: "P", name: "Purge" }, { id: "C", name: "Purge/Newsletter" }] }));
+    const gmail = createGmail({ fetch, sleep: noSleep });
+    expect(await gmail.findLabelId("purge/newsletter")).toBe("C");
+    expect(await gmail.ensureLabel("purge/newsletter")).toBe("C");
+    expect(fetch.mock.calls.every((c) => (c[1] as RequestInit).method === "GET")).toBe(true);
+
+    // Only the child is missing: the existing parent is reused whatever its case.
+    const create = vi.fn()
+      .mockResolvedValueOnce(json(200, { labels: [{ id: "P", name: "PURGE" }] }))
+      .mockResolvedValueOnce(json(200, { id: "M" }));
+    expect(await createGmail({ fetch: create, sleep: noSleep }).ensureLabel("purge/maybe")).toBe("M");
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(create.mock.calls[1]![1].body).name).toBe("purge/maybe");
+  });
 });
