@@ -76,7 +76,7 @@ This produces an unsigned `.app` bundle. macOS will ask you to allow it in Syste
 
 ## How It Works
 
-The app has six main screens. After setup, the work runs in four stages: Rules › Scan › Review › Apply.
+The app has seven main screens. After setup, the work runs in four stages: Rules › Scan › Review › Apply.
 
 ### Welcome
 
@@ -117,9 +117,9 @@ If you changed the age, the attachment checkbox or the starred checkbox since th
 
 Apply checks Gmail and shows what will change, for example "Add 120 labels · Move 4 · Remove 2", with a count for each label. Changes to your rules since the last apply show up here as pending changes too. Click **Apply labels** to write them. If you renamed the label, the old labels are emptied and you can delete them in Gmail.
 
-If you change a label in Gmail after choosing one in Review, the Gmail change wins. A choice you make in Review after a change in Gmail wins.
+A choice you make in Review wins over a change you made to that email in Gmail before then. A change you make in Gmail after Apply has labeled the email wins over your earlier Review choice.
 
-Gmail's label lists can lag for a few minutes after the app changes a label. For mail labeled in the last 10 minutes, the app changes nothing unless Gmail confirms the label it recorded, so it never undoes a change you just made. If Apply says some labels are still settling, try again in a few minutes.
+Gmail's label lists can lag for a few minutes after the app changes a label. For mail labeled in the last 10 minutes, the app changes nothing unless Gmail confirms the label it recorded, so it never undoes a change you just made. If Apply says "Some labels are still settling in Gmail. Try Apply again in a few minutes.", wait and try again.
 
 After applying, Apply lists each label with its count and an **Open in Gmail** button. The `maybe` label carries a note to look through it before deleting. Apply has no delete or trash buttons: the app only labels.
 
