@@ -2,7 +2,7 @@ import pLimit from "p-limit";
 import { decide, type Settings } from "@core/decide.ts";
 import { type Answers, QUESTIONS_VERSION } from "@core/questions.ts";
 import { APIError } from "@typesafe-ai/sdk";
-import { AppError, SignInExpiredError } from "../bridge/errors.ts";
+import { AppError, errorAndCause, SignInExpiredError } from "../bridge/errors.ts";
 import { GmailError, type Gmail, type Summary } from "../gmail/client.ts";
 import type { Judge } from "../jev/client.ts";
 import type { LabelRecord, ScanRecord, Store } from "../storage/db.ts";
@@ -25,10 +25,16 @@ const MAX_CONSECUTIVE_FAILURES = 20;
 
 /** Errors that would hit every email (bad credentials, disabled API), so the run must stop. */
 export function isRunLevelError(err: unknown): boolean {
-  if (err instanceof AppError) return ["NotConfigured", "HostNotAllowed", "Keychain"].includes(err.payload.kind);
-  if (err instanceof APIError) return [401, 402, 403].includes(err.status);
-  if (err instanceof GmailError) return err.status === 401 || (err.status === 403 && /accessNotConfigured|SERVICE_DISABLED/.test(err.reason));
-  return false;
+  return errorAndCause(err).some((e) => {
+    if (e instanceof AppError) return ["NotConfigured", "HostNotAllowed", "Keychain"].includes(e.payload.kind);
+    if (e instanceof APIError) return [401, 402, 403].includes(e.status);
+    if (e instanceof GmailError) return e.status === 401 || (e.status === 403 && /accessNotConfigured|SERVICE_DISABLED/.test(e.reason));
+    return false;
+  });
+}
+
+function isSignInExpired(err: unknown): boolean {
+  return errorAndCause(err).some((e) => e instanceof SignInExpiredError);
 }
 
 async function settleAll(tasks: Promise<unknown>[]): Promise<void> {
@@ -159,7 +165,7 @@ export class ScanEngine {
               }
               consecutiveFailures = 0;
             } catch (err) {
-              if (err instanceof SignInExpiredError) {
+              if (isSignInExpired(err)) {
                 signInExpired = true;
                 return;
               }
@@ -186,7 +192,7 @@ export class ScanEngine {
                 try {
                   await flush();
                 } catch (err) {
-                  if (err instanceof SignInExpiredError) signInExpired = true;
+                  if (isSignInExpired(err)) signInExpired = true;
                   else fatal = err;
                   return;
                 }
@@ -230,7 +236,7 @@ export class ScanEngine {
         this.deps.notify?.("Scan finished", `${this.progress.counts.purge} emails labeled for review.`);
       }
     } catch (err) {
-      this.set({ stage: err instanceof SignInExpiredError ? "signInExpired" : "error", error: err, etaMs: null });
+      this.set({ stage: isSignInExpired(err) ? "signInExpired" : "error", error: err, etaMs: null });
     } finally {
       this.busy = false;
     }
@@ -258,7 +264,7 @@ export class ScanEngine {
             try {
               await gmail.trash(id);
             } catch (err) {
-              if (err instanceof SignInExpiredError) {
+              if (isSignInExpired(err)) {
                 signInExpired = true;
                 return;
               }
@@ -292,7 +298,7 @@ export class ScanEngine {
         }
       }
     } catch (err) {
-      this.set({ stage: err instanceof SignInExpiredError ? "signInExpired" : "error", error: err, etaMs: null });
+      this.set({ stage: isSignInExpired(err) ? "signInExpired" : "error", error: err, etaMs: null });
     } finally {
       this.busy = false;
     }

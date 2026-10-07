@@ -43,3 +43,11 @@ export function toAppError(e: unknown): AppError {
   if (isPayload(e)) return e.kind === "SignInExpired" ? new SignInExpiredError() : new AppError(e);
   return new AppError({ kind: "Network", detail: String(e) });
 }
+
+/**
+ * The error itself, then its `cause` (one level). SDKs such as TypeSafe wrap errors thrown by
+ * our fetch in their own connection error, keeping the original as `cause`.
+ */
+export function errorAndCause(err: unknown): unknown[] {
+  return err instanceof Error && err.cause !== undefined ? [err, err.cause] : [err];
+}

@@ -1,18 +1,35 @@
 import { APIError } from "@typesafe-ai/sdk";
-import { AppError } from "../bridge/errors.ts";
+import { AppError, errorAndCause } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
 
 type Step = 1 | 2 | 3 | 4 | 5 | 6;
-const result = (step: Step, message: string) => ({ step, message });
+type Mapped = { step: Step; message: string };
+const result = (step: Step, message: string): Mapped => ({ step, message });
 
 const API_DISABLED = new Set(["SERVICE_DISABLED", "accessNotConfigured"]);
+const SCOPE_INSUFFICIENT = new Set(["insufficientPermissions", "ACCESS_TOKEN_SCOPE_INSUFFICIENT"]);
+const API_DISABLED_MESSAGE = "The Gmail API isn't turned on for your Google Cloud project yet. If you just turned it on, wait two minutes and try again.";
+const SCOPE_MESSAGE = "Google didn't get permission to your Gmail. Sign in again and tick the box that allows access to Gmail.";
 
-export function errorToStep(err: unknown): { step: Step; message: string } | null {
-  if (err instanceof APIError && (err.status === 401 || err.status === 403)) {
-    return result(1, "TypeSafe didn't accept the Jev key. Check that you copied the whole key.");
+/** Maps a setup-related error to the wizard step that fixes it, or null if it isn't one. */
+export function errorToStep(err: unknown): Mapped | null {
+  for (const e of errorAndCause(err)) {
+    const mapped = mapOne(e);
+    if (mapped) return mapped;
   }
-  if (err instanceof GmailError && API_DISABLED.has(err.reason)) {
-    return result(3, "The Gmail API isn't turned on for your Google Cloud project yet. If you just turned it on, wait two minutes and try again.");
+  return null;
+}
+
+function mapOne(err: unknown): Mapped | null {
+  if (err instanceof APIError) {
+    if (err.status === 401 || err.status === 403) return result(1, "TypeSafe didn't accept the Jev key. Check that you copied the whole key.");
+    if (err.status === 402) return result(1, "Your TypeSafe account is out of credit. Add credit, then try again.");
+    return null;
+  }
+  if (err instanceof GmailError) {
+    if (API_DISABLED.has(err.reason)) return result(3, API_DISABLED_MESSAGE);
+    if (err.status === 403 && SCOPE_INSUFFICIENT.has(err.reason)) return result(6, SCOPE_MESSAGE);
+    return null;
   }
   if (!(err instanceof AppError)) return null;
   const p = err.payload;
@@ -29,14 +46,11 @@ export function errorToStep(err: unknown): { step: Step; message: string } | nul
       if (p.detail.code === "access_denied") {
         return result(4, "Google blocked the sign-in. Add your Gmail address as a test user, then try again.");
       }
-      if (API_DISABLED.has(p.detail.code)) {
-        return result(3, "The Gmail API isn't turned on for your Google Cloud project yet. If you just turned it on, wait two minutes and try again.");
-      }
+      if (API_DISABLED.has(p.detail.code)) return result(3, API_DISABLED_MESSAGE);
+      if (SCOPE_INSUFFICIENT.has(p.detail.code)) return result(6, SCOPE_MESSAGE);
       if (["redirect_uri_mismatch", "invalid_client", "unauthorized_client"].includes(p.detail.code)) {
         return result(5, "Google didn't accept the client. Make sure its type is Desktop app and the ID and secret are copied exactly.");
       }
-      return null;
-    case "Invalid":
       return null;
     default:
       return null;

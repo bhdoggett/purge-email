@@ -1,9 +1,10 @@
-import { APIError } from "@typesafe-ai/sdk";
+import { APIConnectionError, APIError } from "@typesafe-ai/sdk";
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "@core/decide.ts";
+import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
 import { openStore } from "../storage/db.ts";
-import { ScanEngine } from "./engine.ts";
+import { isRunLevelError, ScanEngine } from "./engine.ts";
 import { createFakeGmail, fakeAnswers, makeSummary } from "./fakes.ts";
 
 async function setup(messages = [makeSummary("promo"), makeSummary("mom"), makeSummary("att", { attachmentNames: ["a.pdf"] })], extra: { labelBatch?: number; concurrency?: number } = {}) {
@@ -239,5 +240,22 @@ describe("ScanEngine", () => {
     await engine.start(DEFAULT_SETTINGS);
     expect(gmail.labeled.has("promo")).toBe(false);
     expect((await store.allLabels()).get("promo")?.userRemoved).toBe(true);
+  });
+
+  it("classifies an SDK connection error by the AppError it wraps", () => {
+    const wrap = (cause: unknown) => new APIConnectionError("Connection error.", { cause });
+    expect(isRunLevelError(wrap(new AppError({ kind: "NotConfigured", detail: "jev" })))).toBe(true);
+    expect(isRunLevelError(wrap(new AppError({ kind: "Keychain", detail: "locked" })))).toBe(true);
+    expect(isRunLevelError(wrap(new AppError({ kind: "Network", detail: "reset" })))).toBe(false);
+    expect(isRunLevelError(new APIConnectionError("Connection error."))).toBe(false);
+  });
+
+  it("stops the scan as error when Jev's SDK wraps a missing-key error", async () => {
+    const many = Array.from({ length: 12 }, (_, i) => makeSummary(`p${i}`));
+    const { judge, engine } = await setup(many);
+    judge.mockRejectedValue(new APIConnectionError("Connection error.", { cause: new AppError({ kind: "NotConfigured", detail: "jev" }) }));
+    await engine.start(DEFAULT_SETTINGS);
+    expect(engine.getProgress().stage).toBe("error");
+    expect(judge.mock.calls.length).toBeLessThanOrEqual(4);
   });
 });
