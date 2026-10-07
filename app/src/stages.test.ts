@@ -23,9 +23,9 @@ describe("stageAvailability", () => {
     expect(stageAvailability(scan(), false, "paused").scan).toBe(true);
     expect(stageAvailability(scan({ finished: true, settingsAtScan: DEFAULT_SETTINGS }), false, "done").scan).toBe(true);
   });
-  it("keeps Scan greyed out after a relaunch even when a scan is saved", () => {
-    expect(stageAvailability(scan(), false, "idle").scan).toBe(false);
-    expect(stageAvailability(scan({ finished: true, settingsAtScan: DEFAULT_SETTINGS }), false, "idle").scan).toBe(false);
+  it("keeps Scan open after a relaunch when a scan is saved, so it never sits greyed before Results", () => {
+    expect(stageAvailability(scan(), false, "idle").scan).toBe(true);
+    expect(stageAvailability(scan({ finished: true, settingsAtScan: DEFAULT_SETTINGS }), false, "idle")).toEqual({ rules: true, scan: true, review: true });
   });
   it("allows Results only when the latest scan finished and nothing is running", () => {
     expect(stageAvailability(scan({ finished: true, settingsAtScan: DEFAULT_SETTINGS }), false, "done").review).toBe(true);

@@ -4,6 +4,8 @@ import { Button } from "../components/Button.tsx";
 import { Feed } from "../components/Feed.tsx";
 import { ProgressBar } from "../components/ProgressBar.tsx";
 import { formatDuration, formatUsd } from "../format.ts";
+import { summarize } from "../scan/reconcile.ts";
+import type { ScanRecord } from "../storage/db.ts";
 import type { Services } from "../services.ts";
 import { useProgress } from "../useProgress.ts";
 import { errorToStep } from "../wizard/errorToStep.ts";
@@ -20,7 +22,6 @@ function useNow(active: boolean) {
 }
 
 const STAGE_COPY: Record<string, string> = {
-  idle: "No scan running. Set your rules, then click Start scan.",
   finding: "Finding emails to purge…",
   labeling: "Adding labels in Gmail…",
   paused: "Paused",
@@ -36,6 +37,60 @@ export function Scan({ services, go, openWizard }: { services: Services; go: (s:
   const running = services.engine.isBusy();
   const stage = p.stage === "judging" ? `Reading and judging ${p.done.toLocaleString()} of ${p.total.toLocaleString()}` : (STAGE_COPY[p.stage] ?? "");
   const mapped = p.error ? errorToStep(p.error) : null;
+
+  // With nothing running this session, show the last saved scan instead of an empty screen.
+  const [last, setLast] = useState<{ scan: ScanRecord; counts: { purge: number; keep: number; review: number } | null } | null>(null);
+  useEffect(() => {
+    if (p.stage !== "idle") return;
+    void (async () => {
+      const scan = await services.store.getScan();
+      if (!scan) return setLast(null);
+      const counts = scan.settingsAtScan ? await summarize(services.store, scan.settingsAtScan) : null;
+      setLast({ scan, counts });
+    })();
+  }, [p.stage, services.store]);
+
+  if (p.stage === "idle") {
+    return (
+      <section className={styles.scan}>
+        {last?.scan.finished ? (
+          <>
+            <h1 className={styles.heading}>Last scan finished</h1>
+            <p className={styles.eta}>
+              Started {new Date(last.scan.startedAt).toLocaleString()} · {last.scan.candidateIds.length.toLocaleString()} emails checked
+            </p>
+            {last.counts && (
+              <dl className={styles.counts}>
+                <div><dt>To purge</dt><dd className={styles.purge}>{last.counts.purge.toLocaleString()}</dd></div>
+                <div><dt>To check or unjudged</dt><dd className={styles.review}>{last.counts.review.toLocaleString()}</dd></div>
+                <div><dt>Kept</dt><dd className={styles.keep}>{last.counts.keep.toLocaleString()}</dd></div>
+              </dl>
+            )}
+            <div className={styles.actions}>
+              <Button onClick={() => go("review")}>See results</Button>
+              <Button variant="secondary" onClick={() => go("rules")}>New scan</Button>
+            </div>
+          </>
+        ) : last ? (
+          <>
+            <h1 className={styles.heading}>A scan was left unfinished</h1>
+            <p className={styles.eta}>Resume it from Rules. Emails already checked won't be checked again.</p>
+            <div className={styles.actions}>
+              <Button onClick={() => go("rules")}>Go to Rules</Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h1 className={styles.heading}>No scan yet</h1>
+            <p className={styles.eta}>Set your rules, then click Start scan.</p>
+            <div className={styles.actions}>
+              <Button onClick={() => go("rules")}>Go to Rules</Button>
+            </div>
+          </>
+        )}
+      </section>
+    );
+  }
 
   async function resume() {
     const settings = await services.store.getSettings();
