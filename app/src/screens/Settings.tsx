@@ -50,7 +50,7 @@ export function Settings({ services, email, onChanged, onBack }: { services: Ser
         <Button variant="secondary" disabled={busy} onClick={() => act(() => services.store.clearScanData(), "Scan data cleared.")}>Clear scan data</Button>
       </div>
       {message && <p role={message.error ? "alert" : "status"}>{message.text}</p>}
-      <Button variant="secondary" onClick={onBack}>Back</Button>
+      <Button variant="secondary" className={styles.back} onClick={onBack}>Back</Button>
     </section>
   );
 }

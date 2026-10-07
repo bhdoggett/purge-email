@@ -1,5 +1,5 @@
 .settings {
-  max-width: 64ch;
+  max-width: 84ch;
   margin: var(--space-6) auto;
   padding: 0 var(--space-5);
 }
@@ -18,6 +18,14 @@
   gap: var(--space-5);
   padding: var(--space-4) 0;
   border-bottom: 1px solid var(--color-border);
+}
+/* The button keeps its width so its label stays on one line; the description wraps instead. */
+.row > :last-child {
+  flex-shrink: 0;
+  max-width: 14em;
+}
+.back {
+  margin-top: var(--space-5);
 }
 .muted {
   margin: var(--space-1) 0 0;
