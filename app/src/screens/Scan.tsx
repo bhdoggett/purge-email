@@ -21,7 +21,7 @@ function useNow(active: boolean) {
 
 const STAGE_COPY: Record<string, string> = {
   idle: "No scan running. Set your rules, then click Start scan.",
-  finding: "Finding old emails…",
+  finding: "Finding emails to purge…",
   labeling: "Adding labels in Gmail…",
   paused: "Paused",
   signInExpired: "Paused: Google sign-in expired",
