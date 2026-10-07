@@ -1,6 +1,6 @@
 import type { Decision } from "@core/decide.ts";
 
-export type Stage = "idle" | "finding" | "judging" | "labeling" | "paused" | "signInExpired" | "done" | "error";
+export type Stage = "idle" | "finding" | "judging" | "paused" | "signInExpired" | "done" | "error";
 
 export interface FeedItem {
   id: string;
@@ -19,7 +19,6 @@ export interface Progress {
   total: number;
   /** `maybe` counts the review decisions that got the maybe label; they are also in `review`. */
   counts: { purge: number; keep: number; review: number; maybe: number; failed: number };
-  labeled: number;
   recent: FeedItem[];
   rateLimitUntil: number | null;
   costUsd: number;
@@ -33,7 +32,6 @@ export const INITIAL_PROGRESS: Progress = {
   done: 0,
   total: 0,
   counts: { purge: 0, keep: 0, review: 0, maybe: 0, failed: 0 },
-  labeled: 0,
   recent: [],
   rateLimitUntil: null,
   costUsd: 0,

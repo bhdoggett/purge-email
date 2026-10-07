@@ -6,8 +6,7 @@ import { APIError } from "@typesafe-ai/sdk";
 import { AppError, errorAndCause, SignInExpiredError } from "../bridge/errors.ts";
 import { GmailError, type Gmail, type Summary } from "../gmail/client.ts";
 import type { Judge } from "../jev/client.ts";
-import type { LabelRecord, ScanRecord, Store } from "../storage/db.ts";
-import { asLabelNameError, reconcile } from "./reconcile.ts";
+import type { ScanRecord, Store } from "../storage/db.ts";
 import { FEED_SIZE, INITIAL_PROGRESS, JEV_USD_PER_TOKEN, Pace, type Progress } from "./progress.ts";
 
 export interface EngineDeps {
@@ -15,12 +14,10 @@ export interface EngineDeps {
   judge: Judge;
   store: Store;
   concurrency?: number;
-  labelBatch?: number;
   now?: () => number;
   notify?: (title: string, body: string) => void;
 }
 
-const LABEL_BATCH = 500;
 const MAX_CONSECUTIVE_FAILURES = 20;
 
 /** Errors that would hit every email (bad credentials, disabled API), so the run must stop. */
@@ -114,44 +111,10 @@ export class ScanEngine {
     try {
       const scan = await this.loadOrCreateScan(settings, opts.limit);
       const replied = new Set(scan.repliedThreadIds);
-      const labels = await store.allLabels();
       const pace = new Pace();
-      /** Label name → records waiting to be added in Gmail and stored. */
-      const pending = new Map<string, LabelRecord[]>();
-      const labelIds = new Map<string, Promise<string>>();
-      const labelBatch = this.deps.labelBatch ?? LABEL_BATCH;
       let signInExpired = false;
       let fatal: unknown = null;
       let consecutiveFailures = 0;
-
-      const labelIdFor = (name: string): Promise<string> => {
-        let id = labelIds.get(name);
-        if (!id) {
-          id = gmail.ensureLabel(name).catch((err: unknown) => {
-            labelIds.delete(name);
-            throw asLabelNameError(err);
-          });
-          labelIds.set(name, id);
-        }
-        return id;
-      };
-
-      const flush = async (name: string) => {
-        const records = pending.get(name)?.splice(0) ?? [];
-        if (records.length === 0) return;
-        try {
-          await gmail.addLabel(await labelIdFor(name), records.map((r) => r.id));
-          await store.putLabels(records);
-        } catch (err) {
-          pending.get(name)!.unshift(...records);
-          throw err;
-        }
-        this.set({ labeled: this.progress.labeled + records.length });
-      };
-
-      const flushAll = async () => {
-        for (const name of pending.keys()) await flush(name);
-      };
 
       this.set({ stage: "judging", total: scan.candidateIds.length });
       const run = pLimit(this.deps.concurrency ?? 4);
@@ -201,23 +164,6 @@ export class ScanEngine {
               settings,
             );
             const label = labelFor(decision, answers, settings);
-            if (label !== null && !labels.has(id)) {
-              // One record, so the labeledAt in memory is the one stored at flush.
-              const record: LabelRecord = { id, label, labeledAt: this.now(), userRemoved: false, userChosen: false };
-              labels.set(id, record);
-              const list = pending.get(label) ?? [];
-              list.push(record);
-              pending.set(label, list);
-              if (list.length >= labelBatch) {
-                try {
-                  await flush(label);
-                } catch (err) {
-                  if (isSignInExpired(err)) signInExpired = true;
-                  else fatal = err;
-                  return;
-                }
-              }
-            }
             if (networked) pace.mark(this.now());
             const done = this.progress.done + 1;
             const msPer = pace.msPerItem();
@@ -236,11 +182,6 @@ export class ScanEngine {
         ),
       );
 
-      if (!signInExpired && fatal === null) {
-        this.set({ stage: "labeling" });
-        await flushAll();
-      }
-
       const msPerEmail = pace.msPerItem() ?? scan.msPerEmail;
       if (signInExpired) {
         await store.putScan({ ...scan, msPerEmail });
@@ -252,13 +193,10 @@ export class ScanEngine {
         await store.putScan({ ...scan, msPerEmail });
         this.set({ stage: "paused", etaMs: null });
       } else {
-        // Labels from an earlier scan may no longer match these settings or candidates:
-        // reconcile so Gmail holds exactly the current purge decisions.
-        const { deferred } = await reconcile({ gmail, store, now: () => this.now() }, settings);
-        await store.putScan({ ...scan, finished: true, settingsAtScan: settings, msPerEmail, deferred });
+        await store.putScan({ ...scan, finished: true, settingsAtScan: settings, msPerEmail });
         this.set({ stage: "done", etaMs: null, rateLimitUntil: null });
         const { purge, maybe } = this.progress.counts;
-        this.deps.notify?.("Scan finished", `${purge} to purge and ${maybe} to check, labeled under "${settings.labelPrefix}".`);
+        this.deps.notify?.("Scan finished", `${purge} to purge and ${maybe} to check. Review them, then apply labels.`);
       }
     } catch (err) {
       this.set({ stage: isSignInExpired(err) ? "signInExpired" : "error", error: err, etaMs: null });

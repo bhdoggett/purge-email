@@ -4,7 +4,7 @@ import { currentTheme, otherTheme, setTheme } from "../theme.ts";
 import { UNAVAILABLE_HINT } from "../stages.ts";
 import styles from "./Header.module.css";
 
-const ACTIVE = new Set(["finding", "judging", "labeling"]);
+const ACTIVE = new Set(["finding", "judging"]);
 
 export type NavTarget = "rules" | "scan" | "review";
 
