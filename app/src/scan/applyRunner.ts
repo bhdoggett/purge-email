@@ -63,7 +63,8 @@ export class ApplyRunner {
     if (this.running || this.deps.isScanning()) return this.state;
     this.running = true;
     try {
-      await this.checkInner(settings, undefined);
+      // The last applied message stays until the next apply.
+      await this.checkInner(settings, this.state.phase === "done" ? this.state.message : undefined);
     } finally {
       this.running = false;
     }

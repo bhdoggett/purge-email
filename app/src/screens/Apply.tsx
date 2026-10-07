@@ -35,11 +35,11 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
   const wasScanning = useRef(scanning);
   useEffect(() => {
     // A scan that just finished changed the candidates: check Gmail again.
-    if (wasScanning.current && !scanning) void load(true);
+    if (wasScanning.current && !scanning) void load();
     wasScanning.current = scanning;
   }, [scanning, progress.stage]);
 
-  async function load(force = false) {
+  async function load() {
     try {
       const settings = await store.getSettings();
       const scan = await store.getScan();
@@ -50,10 +50,8 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         setGate({ kind: "rescan", settings });
       } else {
         setGate({ kind: "ready", settings });
-        const current = applier.getState();
-        // A finished result with its message is shown as it is; a running job is never disturbed.
-        const showResult = current.phase === "done" && current.message !== undefined && !force;
-        if (!applier.busy() && !showResult) void applier.check(settings);
+        // Every visit checks Gmail again; a running job is never disturbed.
+        if (!applier.busy()) void applier.check(settings);
       }
       setGateError(null);
     } catch (e) {

@@ -76,6 +76,16 @@ describe("ApplyRunner", () => {
     expect(runner.busy()).toBe(false);
   });
 
+  it("a later check() finds new changes and keeps the last applied message", async () => {
+    const { runner, store } = await arrange();
+    await runner.check(DEFAULT_SETTINGS);
+    await runner.apply(DEFAULT_SETTINGS, runner.getState().preview!);
+    expect(runner.getState().message).toBe("Added 2, moved 0, removed 0.");
+    await store.putOverrides(["a"], null, NOW + 1);
+    await runner.check(DEFAULT_SETTINGS);
+    expect(runner.getState()).toMatchObject({ phase: "done", message: "Added 2, moved 0, removed 0.", preview: { removed: 1 } });
+  });
+
   it("check() during a write returns without previewing or saving", async () => {
     const { runner, gmail, store } = await arrange();
     await runner.check(DEFAULT_SETTINGS);
