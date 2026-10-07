@@ -1,0 +1,45 @@
+import { useState } from "react";
+import { clearSecrets, signOut } from "../bridge/tauri.ts";
+import { Button } from "../components/Button.tsx";
+import type { Services } from "../services.ts";
+import styles from "./Settings.module.css";
+
+export function Settings({ services, email, onChanged, onBack }: { services: Services; email: string | null; onChanged: () => void; onBack: () => void }) {
+  const [message, setMessage] = useState<string | null>(null);
+  const busy = services.engine.isBusy();
+
+  async function act(fn: () => Promise<void>, done: string) {
+    await fn();
+    setMessage(done);
+    onChanged();
+  }
+
+  return (
+    <section className={styles.settings}>
+      <h1 className={styles.heading}>Settings</h1>
+      <div className={styles.row}>
+        <div>
+          <h2 className={styles.subheading}>Gmail</h2>
+          <p className={styles.muted}>{email ? `Signed in as ${email}` : "Not signed in"}</p>
+        </div>
+        <Button variant="secondary" disabled={!email || busy} onClick={() => act(signOut, "Signed out of Gmail.")}>Sign out</Button>
+      </div>
+      <div className={styles.row}>
+        <div>
+          <h2 className={styles.subheading}>Saved keys</h2>
+          <p className={styles.muted}>Removes the Jev key and Google client from the Keychain and signs you out.</p>
+        </div>
+        <Button variant="danger" disabled={busy} onClick={() => act(clearSecrets, "Keys removed.")}>Remove keys</Button>
+      </div>
+      <div className={styles.row}>
+        <div>
+          <h2 className={styles.subheading}>Scan data</h2>
+          <p className={styles.muted}>Forgets saved Jev answers. The next scan pays for Jev again. Labels in Gmail stay.</p>
+        </div>
+        <Button variant="secondary" disabled={busy} onClick={() => act(() => services.store.clearScanData(), "Scan data cleared.")}>Clear scan data</Button>
+      </div>
+      {message && <p role="status">{message}</p>}
+      <Button variant="secondary" onClick={onBack}>Back</Button>
+    </section>
+  );
+}

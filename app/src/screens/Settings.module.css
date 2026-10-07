@@ -1,0 +1,26 @@
+.settings {
+  max-width: 64ch;
+  margin: var(--space-6) auto;
+  padding: 0 var(--space-5);
+}
+.heading {
+  font-family: var(--font-display);
+  font-size: var(--text-xl);
+}
+.subheading {
+  font-size: var(--text-base);
+  margin: 0;
+}
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.muted {
+  margin: var(--space-1) 0 0;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
