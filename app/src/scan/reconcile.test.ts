@@ -4,6 +4,7 @@ import { needsRescan } from "@core/labels.ts";
 import type { Answers } from "@core/questions.ts";
 import type { Summary } from "../gmail/client.ts";
 import { type LabelRecord, openStore } from "../storage/db.ts";
+import { testKey } from "../test/key.ts";
 import { createFakeGmail, fakeAnswers, idsWithLabel, makeSummary } from "./fakes.ts";
 import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
@@ -430,7 +431,7 @@ describe("planReconcile: narrower rules without a rescan", () => {
 
 describe("reconcile", () => {
   it("moves labels in Gmail to match changed purge kinds and saves the records", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     const msgs = [makeSummary("news"), makeSummary("promo")];
     const gmail = createFakeGmail(msgs);
     for (const m of msgs) await store.putSummary(m);
@@ -460,7 +461,7 @@ describe("reconcile", () => {
   });
 
   it("defers a just-labeled email whose label is gone from Gmail, then marks it user-removed", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     const gmail = createFakeGmail([makeSummary("a")]);
     await store.putSummary(makeSummary("a"));
     await store.putAnswers("a", fakeAnswers({ newsletter: 0.95 }));
@@ -483,7 +484,7 @@ describe("reconcile", () => {
   });
 
   it("keeps an app-named label it has no record of and records it as the user's", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     const gmail = createFakeGmail([makeSummary("mine")]);
     await store.putScan({ ageMonths: 120, candidateIds: [], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
     gmail.labelsOf.set("mine", new Set(["purge/work"]));
@@ -494,7 +495,7 @@ describe("reconcile", () => {
   });
 
   it("reports a label name Gmail rejects as a plain Invalid error", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     const gmail = createFakeGmail([makeSummary("a")]);
     await store.putSummary(makeSummary("a"));
     await store.putAnswers("a", fakeAnswers({ newsletter: 0.95 }));
@@ -514,7 +515,7 @@ describe("reconcile", () => {
   });
 
   it("leaves a trashed labeled email alone and detects a user removal", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     const msgs = [makeSummary("trashed"), makeSummary("removed")];
     const gmail = createFakeGmail(msgs);
     for (const m of msgs) {
@@ -586,7 +587,7 @@ describe("prefixInUseByUser", () => {
 
 describe("summarize", () => {
   it("counts decisions over scanned candidates", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     for (const id of ["news", "promo", "other"]) await store.putSummary(makeSummary(id));
     await store.putAnswers("news", fakeAnswers({ newsletter: 0.95 }));
     await store.putAnswers("promo", fakeAnswers({ promotion: 0.95 }));
@@ -596,7 +597,7 @@ describe("summarize", () => {
   });
 
   it("uses the starred setting", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     await store.putSummary(makeSummary("s", { labels: ["STARRED"] }));
     await store.putAnswers("s", fakeAnswers({ promotion: 0.95 }));
     await store.putScan({ ageMonths: 120, candidateIds: ["s"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
@@ -605,7 +606,7 @@ describe("summarize", () => {
   });
 
   it("counts mail newer than the age as keep", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     await store.putSummary(makeSummary("a", { date: new Date(2025, 9, 7).toUTCString() }));
     await store.putAnswers("a", fakeAnswers({ promotion: 0.95 }));
     await store.putScan({ ageMonths: 0, candidateIds: ["a"], repliedThreadIds: [], finished: true, startedAt: 0, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: 100 });
@@ -614,7 +615,7 @@ describe("summarize", () => {
   });
 
   it("counts overrides by their label: no label is keep, maybe is review, any other is purge", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     for (const id of ["a", "b", "c"]) {
       await store.putSummary(makeSummary(id));
       await store.putAnswers(id, fakeAnswers({ promotion: 0.95 }));
@@ -630,7 +631,7 @@ describe("summarize", () => {
 
 describe("scanCounts", () => {
   async function arrange() {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     for (const id of ["news", "promo"]) await store.putSummary(makeSummary(id));
     await store.putAnswers("news", fakeAnswers({ newsletter: 0.95 }));
     await store.putAnswers("promo", fakeAnswers({ promotion: 0.95 }));
@@ -673,7 +674,7 @@ describe("labelTotalsAfter", () => {
 
 describe("previewReconcile", () => {
   async function arrange() {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     const gmail = createFakeGmail([makeSummary("a")]);
     await store.putSummary(makeSummary("a"));
     await store.putAnswers("a", fakeAnswers({ promotion: 0.97 }));
@@ -735,7 +736,7 @@ describe("previewReconcile", () => {
       expect((err as AppError).payload).toEqual({ kind: "Invalid", detail: "Scan your mail first." });
       for (const spy of calls) expect(spy).not.toHaveBeenCalled();
     }
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     await expect(previewReconcile({ gmail: createFakeGmail([]), store, now: () => NOW }, DEFAULT_SETTINGS)).rejects.toBeInstanceOf(AppError);
   });
 
@@ -764,7 +765,7 @@ describe("previewReconcile", () => {
 
 describe("progress reporting", () => {
   async function arrange(ids: string[]) {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     const msgs = ids.map((id) => makeSummary(id));
     const gmail = createFakeGmail(msgs);
     for (const m of msgs) {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { DEFAULT_SETTINGS } from "@core/decide.ts";
 import { openStore } from "../storage/db.ts";
+import { testKey } from "../test/key.ts";
 import { ApplyRunner } from "./applyRunner.ts";
 import { ScanEngine } from "./engine.ts";
 import { createFakeGmail, fakeAnswers, idsWithLabel, makeSummary } from "./fakes.ts";
@@ -9,7 +10,7 @@ import { previewReconcile } from "./reconcile.ts";
 const NOW = new Date(2026, 9, 7, 12).getTime();
 
 async function arrange(ids = ["a", "b"], scanning = () => false) {
-  const store = await openStore(`t-${crypto.randomUUID()}`);
+  const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
   const msgs = ids.map((id) => makeSummary(id));
   const gmail = createFakeGmail(msgs);
   for (const m of msgs) {
@@ -162,7 +163,7 @@ describe("ApplyRunner", () => {
 
 describe("ScanEngine while labels are being applied", () => {
   it("does not start", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     const gmail = createFakeGmail([makeSummary("a")]);
     const judge = vi.fn(async () => fakeAnswers({ promotion: 0.97 }));
     const engine = new ScanEngine({ gmail, judge, store, isBlocked: () => true });

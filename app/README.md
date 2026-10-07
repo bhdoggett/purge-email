@@ -135,7 +135,7 @@ After applying, Apply lists each label with its count and an **Open in Gmail** b
 
 ### Settings
 
-Access settings from a button in the header. Here you can remove your saved Jev key, Google credentials, and scan data to start fresh or switch accounts. Your Review changes are kept. After clearing scan data, Apply asks you to scan again before it writes anything to Gmail.
+Access settings from a button in the header. Here you can remove your saved Jev key, Google credentials, and scan data to start fresh or switch accounts. Removing keys also clears scan data, because it deletes the key that encrypts it. Your Review changes are kept. After clearing scan data, Apply asks you to scan again before it writes anything to Gmail.
 
 ## Architecture
 
@@ -143,4 +143,6 @@ Access settings from a button in the header. Here you can remove your saved Jev 
 - **Backend:** Rust (via Tauri), routes API requests through a proxy that adds authentication keys
 - **Data Storage:** macOS Keychain for credentials, IndexedDB for scan results and settings
 
-API requests to Gmail and Jev are built by the frontend but routed through a Rust proxy (`app/src-tauri/src/proxy.rs`) that adds the authentication keys. This ensures your credentials and API keys never reach the web view.
+API requests to Gmail and Jev are built by the frontend but routed through a Rust proxy (`app/src-tauri/src/proxy.rs`) that adds the authentication keys. This ensures your Gmail credentials and Jev key never reach the web view.
+
+Email details saved by a scan (sender, recipients, subject, date, snippet, attachment names) and Jev's scores are encrypted on disk with AES-256-GCM (`app/src/storage/crypto.ts`). The key is generated on first launch and kept in the Keychain (Credential Manager on Windows) alongside your other secrets; the web view receives only this key. Message IDs, the labels the app added, your Review choices, and settings are stored unencrypted. This protects the saved email details if someone copies the app's data folder, reads a backup, or uses another account on the computer. It does not protect against malware running as you or someone using the app while you are signed in to your computer, since both can get the key the same way the app does. Remove keys in Settings deletes the key and clears the encrypted scan data with it.

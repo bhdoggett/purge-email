@@ -18,3 +18,14 @@ export async function forgetSteps(store: Store, steps: Step[]): Promise<void> {
 /** Steps backed by a Keychain secret: the Jev key, the Google client, and the sign-in. */
 export const KEY_STEPS: Step[] = [1, 5, 6];
 export const SIGN_IN_STEPS: Step[] = [6];
+
+/**
+ * Settings → Remove keys: a full reset of the Keychain secrets, including the key that encrypts
+ * saved emails and Jev answers, so those are cleared too rather than left unreadable on disk.
+ */
+export async function removeKeys(store: Store, deps: { clearSecrets: () => Promise<void>; forgetDataKey: () => void }): Promise<void> {
+  await deps.clearSecrets();
+  deps.forgetDataKey();
+  await store.clearScanData();
+  await forgetSteps(store, KEY_STEPS);
+}

@@ -4,11 +4,12 @@ import { DEFAULT_SETTINGS } from "@core/decide.ts";
 import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
 import { openStore } from "../storage/db.ts";
+import { testKey } from "../test/key.ts";
 import { isRunLevelError, ScanEngine } from "./engine.ts";
 import { createFakeGmail, fakeAnswers, makeSummary } from "./fakes.ts";
 
 async function setup(messages = [makeSummary("promo"), makeSummary("mom"), makeSummary("att", { attachmentNames: ["a.pdf"] })], extra: { concurrency?: number; now?: () => number } = {}) {
-  const store = await openStore(`t-${crypto.randomUUID()}`);
+  const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
   const gmail = createFakeGmail(messages);
   const judge = vi.fn(async (f: { subject: string }) => {
     if (f.subject.includes("mom")) return fakeAnswers({ none: 1 }, { personal: 0.95 });

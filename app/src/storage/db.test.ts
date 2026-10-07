@@ -3,13 +3,15 @@ import { DEFAULT_SETTINGS } from "@core/decide.ts";
 import { QUESTIONS_VERSION } from "@core/questions.ts";
 import { openDB } from "idb";
 import { openStore } from "./db.ts";
+import { randomKeyBase64, testKey } from "../test/key.ts";
+import { encryptJson, importDataKey } from "./crypto.ts";
 
 const summary = { id: "m1", threadId: "t1", from: "a", to: "b", cc: "", subject: "s", date: "d", snippet: "x", labels: [], hasListUnsubscribe: false, attachmentNames: [] };
 const answers = { version: QUESTIONS_VERSION, kind: { newsletter: 1, promotion: 0, social: 0, securityAlert: 0, shipping: 0, scam: 0, work: 0, automated: 0, none: 0 }, protect: { personal: 0, financial: 0, accountLegal: 0 }, inputTokens: 700 };
 
 describe("store", () => {
   it("round-trips summaries, answers, labels, settings, scan, and wizard progress", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     expect(await store.getSettings()).toEqual(DEFAULT_SETTINGS);
     expect(await store.getScan()).toBeNull();
 
@@ -32,7 +34,7 @@ describe("store", () => {
   });
 
   it("clearScanData keeps settings, wizard progress, and label records", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     await store.putSummary(summary);
     await store.putAnswers("m1", answers);
     await store.putLabels([{ id: "m1", label: "purge/promotion", labeledAt: 5, userRemoved: true, userChosen: false }]);
@@ -48,7 +50,7 @@ describe("store", () => {
   });
 
   it("fills settings missing from older stored records with defaults", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     await store.putSettings({ purgeKinds: ["scam"], protects: [], years: 10, strictness: "balanced" } as never);
     const s = await store.getSettings();
     expect(s.purgeKinds).toEqual(["scam"]);
@@ -60,7 +62,7 @@ describe("store", () => {
   });
 
   it("converts years in stored settings and scans to months", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     const { ageMonths: _, ...rest } = DEFAULT_SETTINGS;
     const old = { ...rest, years: 3 };
     await store.putSettings(old as never);
@@ -74,7 +76,7 @@ describe("store", () => {
   });
 
   it("leaves a missing scan settings snapshot missing", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     await store.putScan({ years: 2, candidateIds: [], repliedThreadIds: [], finished: false, startedAt: 1, settingsAtScan: null, msPerEmail: null } as never);
     const scan = (await store.getScan())!;
     expect(scan.settings).toBeUndefined();
@@ -83,7 +85,7 @@ describe("store", () => {
   });
 
   it("uses the supplied defaults when nothing is stored", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`, { ...DEFAULT_SETTINGS, labelPrefix: "purge-test" });
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`, { ...DEFAULT_SETTINGS, labelPrefix: "purge-test" });
     expect((await store.getSettings()).labelPrefix).toBe("purge-test");
   });
 
@@ -100,13 +102,13 @@ describe("store", () => {
     await old.put("summaries", summary);
     await old.put("labels", { id: "m1", labeledByApp: true, userRemoved: false });
     old.close();
-    const store = await openStore(name);
+    const store = await openStore(testKey, name);
     expect((await store.allLabels()).size).toBe(0);
     expect(await store.getSummary("m1")).toEqual(summary);
   });
 
   it("saves, reads and deletes overrides", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     await store.putOverrides(["a", "b"], "promotion", 5);
     await store.putOverrideList([{ id: "c", slug: null, at: 6 }]);
     expect(await store.allOverrides()).toEqual(
@@ -121,7 +123,7 @@ describe("store", () => {
   });
 
   it("keeps overrides when scan data is cleared", async () => {
-    const store = await openStore(`t-${crypto.randomUUID()}`);
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     await store.putOverrides(["a"], "maybe", 1);
     await store.clearScanData();
     expect((await store.allOverrides()).get("a")?.slug).toBe("maybe");
@@ -141,9 +143,181 @@ describe("store", () => {
     await v2.put("labels", { id: "x", label: "purge/promotion", labeledAt: 1, userRemoved: false, userChosen: false });
     await v2.put("answers", { version: 2 }, "x");
     v2.close();
-    const store = await openStore(name);
+    const store = await openStore(testKey, name);
     expect((await store.allLabels()).get("x")?.label).toBe("purge/promotion");
     expect(await store.getAnswers("x")).toEqual({ version: 2 });
     expect((await store.allOverrides()).size).toBe(0);
+  });
+});
+
+const secretSummary = { ...summary, id: "m9", subject: "Your biopsy results", snippet: "Dear Pat, the results", from: "clinic@example.com" };
+
+async function rawRecord(name: string, store: "summaries" | "answers", id: string) {
+  const db = await openDB(name);
+  try {
+    return (await db.get(store, id)) as Record<string, unknown> | undefined;
+  } finally {
+    db.close();
+  }
+}
+
+/** A database exactly as version 3 left it, with plaintext summaries and answers. */
+async function makeV3(name: string, ids: string[], seal?: { key: CryptoKey; ids: Set<string> }) {
+  const v3 = await openDB(name, 3, {
+    upgrade(db) {
+      db.createObjectStore("summaries", { keyPath: "id" });
+      db.createObjectStore("answers");
+      db.createObjectStore("labels", { keyPath: "id" });
+      db.createObjectStore("kv");
+      db.createObjectStore("overrides", { keyPath: "id" });
+    },
+  });
+  for (const id of ids) {
+    const s = { ...secretSummary, id, subject: `subject ${id}` };
+    const a = { ...answers, inputTokens: ids.indexOf(id) };
+    if (seal?.ids.has(id)) {
+      const { id: _, ...rest } = s;
+      await v3.put("summaries", { id, ...(await encryptJson(seal.key, rest)) });
+      await v3.put("answers", await encryptJson(seal.key, a), id);
+    } else {
+      await v3.put("summaries", s);
+      await v3.put("answers", a, id);
+    }
+  }
+  await v3.put("labels", { id: "m1", label: "purge/promotion", labeledAt: 1, userRemoved: false, userChosen: false });
+  await v3.put("overrides", { id: "m1", slug: "promotion", at: 2 });
+  await v3.put("kv", [1, 2], "wizard");
+  v3.close();
+}
+
+describe("encryption at rest", () => {
+  it("stores summaries and answers as iv + ciphertext only", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const store = await openStore(testKey, name);
+    await store.putSummary(secretSummary);
+    await store.putAnswers("m9", answers);
+
+    const s = (await rawRecord(name, "summaries", "m9"))!;
+    expect(Object.keys(s).sort()).toEqual(["data", "id", "iv"]);
+    expect(s.id).toBe("m9");
+    expect(s.iv).toBeInstanceOf(Uint8Array);
+    expect(s.data).toBeInstanceOf(ArrayBuffer);
+    const text = JSON.stringify(s) + new TextDecoder("latin1").decode(s.data as ArrayBuffer);
+    expect(text).not.toContain("biopsy");
+    expect(text).not.toContain("clinic@example.com");
+
+    const a = (await rawRecord(name, "answers", "m9"))!;
+    expect(Object.keys(a).sort()).toEqual(["data", "iv"]);
+    expect(JSON.stringify(a)).not.toContain("newsletter");
+
+    expect(await store.getSummary("m9")).toEqual(secretSummary);
+    expect(await store.getAnswers("m9")).toEqual(answers);
+    expect((await store.allSummaries()).get("m9")).toEqual(secretSummary);
+    expect((await store.allAnswers()).get("m9")).toEqual(answers);
+  });
+
+  it("encrypts a version 3 database in place on open, keeping everything else", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const ids = Array.from({ length: 1234 }, (_, i) => `m${i}`);
+    await makeV3(name, ids);
+    const store = await openStore(testKey, name);
+
+    for (const id of ["m0", "m617", "m1233"]) {
+      const s = (await rawRecord(name, "summaries", id))!;
+      expect(Object.keys(s).sort()).toEqual(["data", "id", "iv"]);
+      expect(Object.keys((await rawRecord(name, "answers", id))!).sort()).toEqual(["data", "iv"]);
+    }
+    const all = await store.allSummaries();
+    expect(all.size).toBe(1234);
+    expect(all.get("m617")).toEqual({ ...secretSummary, id: "m617", subject: "subject m617" });
+    expect((await store.allAnswers()).get("m617")?.inputTokens).toBe(617);
+    expect((await store.allLabels()).get("m1")?.label).toBe("purge/promotion");
+    expect((await store.allOverrides()).get("m1")?.slug).toBe("promotion");
+    expect(await store.getWizard()).toEqual([1, 2]);
+
+    const db = await openDB(name);
+    expect(db.version).toBe(4);
+    expect(await db.get("kv", "encrypted")).toBe(true);
+    db.close();
+  });
+
+  it("does not rescan once the migration is marked done", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    await openStore(testKey, name);
+    const db = await openDB(name);
+    await db.put("summaries", { ...secretSummary, id: "late" });
+    db.close();
+    const store = await openStore(testKey, name);
+    expect(Object.keys((await rawRecord(name, "summaries", "late"))!)).toContain("subject");
+    // A leftover plaintext record is still readable rather than lost.
+    expect((await store.getSummary("late"))?.subject).toBe(secretSummary.subject);
+  });
+
+  it("finishes a migration that was interrupted halfway", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const key = await testKey();
+    const ids = ["a", "b", "c", "d"];
+    await makeV3(name, ids, { key, ids: new Set(["a", "b"]) });
+    const store = await openStore(testKey, name);
+    for (const id of ids) {
+      expect(Object.keys((await rawRecord(name, "summaries", id))!).sort()).toEqual(["data", "id", "iv"]);
+      expect(await store.getSummary(id)).toEqual({ ...secretSummary, id, subject: `subject ${id}` });
+      expect((await store.getAnswers(id))?.inputTokens).toBe(ids.indexOf(id));
+    }
+  });
+
+  it("treats records it cannot decrypt as missing, without throwing", async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const lost = await openStore(await importDataKey(randomKeyBase64()), name);
+    await lost.putSummary(secretSummary);
+    await lost.putAnswers("m9", answers);
+
+    const store = await openStore(await importDataKey(randomKeyBase64()), name);
+    expect(await store.getSummary("m9")).toBeUndefined();
+    expect(await store.getAnswers("m9")).toBeUndefined();
+    expect((await store.allSummaries()).size).toBe(0);
+    expect((await store.allAnswers()).size).toBe(0);
+
+    await store.putSummary(summary);
+    await store.putAnswers("m1", answers);
+    expect([...(await store.allSummaries()).keys()]).toEqual(["m1"]);
+    expect([...(await store.allAnswers()).keys()]).toEqual(["m1"]);
+    // Re-saving a lost record replaces it with one the current key can read.
+    await store.putSummary(secretSummary);
+    expect(await store.getSummary("m9")).toEqual(secretSummary);
+  });
+
+  it("asks the key provider again after the key is replaced", async () => {
+    let key = importDataKey(randomKeyBase64());
+    const store = await openStore(() => key, `t-${crypto.randomUUID()}`);
+    await store.putSummary(summary);
+    key = importDataKey(randomKeyBase64());
+    expect(await store.getSummary("m1")).toBeUndefined();
+    await store.putSummary(summary);
+    expect(await store.getSummary("m1")).toEqual(summary);
+  });
+
+  it("loads 30,000 encrypted summaries quickly", { timeout: 120_000 }, async () => {
+    const name = `t-${crypto.randomUUID()}`;
+    const store = await openStore(testKey, name);
+    const key = await testKey();
+    const n = 30_000;
+    const records = await Promise.all(
+      Array.from({ length: n }, async (_, i) => {
+        const { id: _id, ...rest } = { ...secretSummary, subject: `A fairly typical marketing subject line number ${i}`, snippet: "x".repeat(200) };
+        return { id: `m${i}`, ...(await encryptJson(key, rest)) };
+      }),
+    );
+    const db = await openDB(name);
+    const tx = db.transaction("summaries", "readwrite");
+    await Promise.all([...records.map((r) => tx.store.put(r)), tx.done]);
+    db.close();
+
+    const start = performance.now();
+    const all = await store.allSummaries();
+    const ms = performance.now() - start;
+    console.log(`allSummaries decrypted ${n} summaries in ${Math.round(ms)} ms`);
+    expect(all.size).toBe(n);
+    expect(ms).toBeLessThan(30_000);
   });
 });
