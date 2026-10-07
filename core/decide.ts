@@ -10,6 +10,12 @@ export const STRICTNESS: Record<Strictness, { purgeAt: number; protectAt: number
 
 export const REVIEW_AT = 0.5;
 
+/** Personal mail is labeled trivial only when the chance it is meaningful is below this line. */
+export const TRIVIAL_LINE: Record<Strictness, number> = { careful: 0.2, balanced: 0.3, aggressive: 0.4 };
+
+/** Label slug for trivial personal mail. */
+export const PERSONAL_SLUG = "personal";
+
 export interface Settings {
   purgeKinds: PurgeKind[];
   protects: ProtectId[];
@@ -21,6 +27,8 @@ export interface Settings {
   keepStarred: boolean;
   /** Send each email's ~200-character body preview to Jev. Off: Jev judges from headers, labels and file names only. */
   sendPreviews: boolean;
+  /** Label personal mail that Jev finds trivial, unless the sender is a close person. */
+  trivialPersonal: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -32,6 +40,7 @@ export const DEFAULT_SETTINGS: Settings = {
   keepAttachments: true,
   keepStarred: true,
   sendPreviews: true,
+  trivialPersonal: false,
 };
 
 /**
@@ -66,6 +75,25 @@ export interface MessageFlags {
   attachmentCount: number;
   /** ms since epoch from the Date header; null when it is missing or can't be read. */
   receivedAt: number | null;
+  /** The sender is one of the user's close people. */
+  senderClose: boolean;
+}
+
+export interface DecideResult {
+  decision: Decision;
+  reason: string;
+  /** Label slug chosen by the rule itself (trivial personal mail); otherwise labelFor picks the kind. */
+  slug?: string;
+}
+
+const PERSONAL_UNCHECKED = "personal unchecked";
+
+/**
+ * True when the email would be labeled or kept by the trivial-personal rule, but Jev hasn't been
+ * asked whether it is meaningful yet. Close senders and mail kept for other reasons are never asked.
+ */
+export function needsSignificance(flags: MessageFlags, answers: Answers | null, settings: Settings, now: number): boolean {
+  return decide(flags, answers, settings, now).reason === PERSONAL_UNCHECKED;
 }
 
 export function decide(
@@ -73,7 +101,7 @@ export function decide(
   answers: Answers | null,
   settings: Settings,
   now: number,
-): { decision: Decision; reason: string } {
+): DecideResult {
   if (flags.starred && settings.keepStarred) return { decision: "keep", reason: "starred" };
   if (flags.attachmentCount > 0 && settings.keepAttachments) return { decision: "keep", reason: "attachment" };
   if (settings.ageMonths > 0) {
@@ -84,6 +112,20 @@ export function decide(
   if (!answers || answers.version !== QUESTIONS_VERSION) return { decision: "review", reason: "not judged" };
 
   const { purgeAt, protectAt } = STRICTNESS[settings.strictness];
+
+  if (settings.trivialPersonal && answers.protect.personal >= protectAt) {
+    const records = settings.protects
+      .filter((id) => id !== "personal")
+      .map((id) => [id, answers.protect[id]] as const)
+      .sort((a, b) => b[1] - a[1]);
+    const top = records[0];
+    if (top && top[1] >= protectAt) return { decision: "keep", reason: `${top[0]} ${top[1].toFixed(2)}` };
+    if (flags.senderClose) return { decision: "keep", reason: "close person" };
+    const s = answers.significance;
+    if (s === undefined) return { decision: "keep", reason: PERSONAL_UNCHECKED };
+    if (s >= TRIVIAL_LINE[settings.strictness]) return { decision: "keep", reason: `meaningful ${s.toFixed(2)}` };
+    return { decision: "purge", reason: `personal trivial ${(1 - s).toFixed(2)}`, slug: PERSONAL_SLUG };
+  }
 
   const protects = settings.protects
     .map((id) => [id, answers.protect[id]] as const)

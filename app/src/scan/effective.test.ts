@@ -37,7 +37,7 @@ describe("effectiveLabel", () => {
 describe("flagsOf", () => {
   it("reads starred, attachments and the date", () => {
     const s = makeSummary("a", { labels: ["STARRED"], attachmentNames: ["x.pdf"], date: "Mon, 01 Jan 2024 00:00:00 +0000" });
-    expect(flagsOf(s)).toEqual({ starred: true, attachmentCount: 1, receivedAt: Date.UTC(2024, 0, 1) });
+    expect(flagsOf(s)).toEqual({ starred: true, attachmentCount: 1, receivedAt: Date.UTC(2024, 0, 1), senderClose: false });
   });
   it("gives a null date when the Date header can't be read", () => {
     expect(flagsOf(makeSummary("a", { date: "bad date" })).receivedAt).toBeNull();

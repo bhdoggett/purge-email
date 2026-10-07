@@ -31,14 +31,18 @@ describe("labelFor", () => {
     expect(labelFor("review", { ...answers({}), version: 1 }, DEFAULT_SETTINGS)).toBeNull();
     expect(labelFor("keep", answers({ promotion: 0.9 }), DEFAULT_SETTINGS)).toBeNull();
   });
+  it("uses the slug decide() chose when there is one", () => {
+    expect(labelFor("purge", answers({ promotion: 0.9 }), DEFAULT_SETTINGS, "personal")).toBe("purge/personal");
+    expect(labelFor("purge", answers({}), { ...DEFAULT_SETTINGS, purgeKinds: [] }, "personal")).toBe("purge/personal");
+  });
   it("uses the configured prefix", () => {
     expect(labelFor("purge", answers({ scam: 1 }), { ...DEFAULT_SETTINGS, labelPrefix: "old mail" })).toBe("old mail/scam");
   });
 });
 
 describe("appLabelNames", () => {
-  it("lists 8 kinds plus maybe", () => {
-    expect(appLabelNames("p")).toEqual(["p/newsletter", "p/promotion", "p/social", "p/security-alert", "p/shipping", "p/scam", "p/work", "p/automated", "p/maybe"]);
+  it("lists 8 kinds, trivial personal mail, then maybe", () => {
+    expect(appLabelNames("p")).toEqual(["p/newsletter", "p/promotion", "p/social", "p/security-alert", "p/shipping", "p/scam", "p/work", "p/automated", "p/personal", "p/maybe"]);
   });
 });
 
@@ -86,6 +90,7 @@ describe("needsRescan", () => {
   });
   it("ignores rules that don't change the candidates", () => {
     expect(needsRescan(DEFAULT_SETTINGS, at({ labelPrefix: "x", strictness: "careful", purgeKinds: [] }))).toBe(false);
+    expect(needsRescan(DEFAULT_SETTINGS, at({ trivialPersonal: true }))).toBe(false);
   });
 });
 
@@ -112,8 +117,8 @@ describe("suggestedSlug", () => {
 });
 
 describe("slug helpers", () => {
-  it("lists kind slugs then maybe", () => {
-    expect(ALL_SLUGS).toEqual(["newsletter", "promotion", "social", "security-alert", "shipping", "scam", "work", "automated", "maybe"]);
+  it("lists kind slugs, personal, then maybe", () => {
+    expect(ALL_SLUGS).toEqual(["newsletter", "promotion", "social", "security-alert", "shipping", "scam", "work", "automated", "personal", "maybe"]);
   });
   it("reads the slug of a label under the prefix only", () => {
     expect(slugOfLabel("purge/promotion", "purge")).toBe("promotion");
@@ -123,5 +128,6 @@ describe("slug helpers", () => {
   it("maps a slug back to its kind", () => {
     expect(kindOfSlug("security-alert")).toBe("securityAlert");
     expect(kindOfSlug("maybe")).toBeNull();
+    expect(kindOfSlug("personal")).toBeNull();
   });
 });

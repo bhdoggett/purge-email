@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildState, QUESTIONS_VERSION, toAnswers } from "./questions.ts";
+import { buildState, QUESTIONS_VERSION, SIGNIFICANCE_QUESTIONS, toAnswers, toSignificance } from "./questions.ts";
 
 describe("toAnswers", () => {
   it("maps SDK results and fills missing kind probabilities with 0", () => {
@@ -32,5 +32,22 @@ describe("buildState", () => {
   it("passes attachment file names through", () => {
     const s = buildState({ from: "", to: "", cc: "", subject: "", date: "", snippet: "", ownerReplied: false, hasListUnsubscribe: false, labels: [], attachmentNames: ["a.pdf", "b.png"] });
     expect(s.facts.attachmentFileNames).toEqual(["a.pdf", "b.png"]);
+  });
+});
+
+describe("significance question", () => {
+  it("asks whether the email is personally meaningful, as a noul", () => {
+    expect(SIGNIFICANCE_QUESTIONS.meaningful.type).toBe("noul");
+    expect(SIGNIFICANCE_QUESTIONS.meaningful.instructions).toBe("Is this email personally meaningful to keep?");
+    expect(SIGNIFICANCE_QUESTIONS.meaningful.criteria.false).toMatch(/^Trivial logistics/);
+  });
+
+  it("maps the SDK result to the probability of meaningful and the tokens used", () => {
+    const result = { model: "jev", usage: { input_tokens: 640, output_tokens: 5 }, answers: { meaningful: { type: "noul", noul: 0.72 } } } as never;
+    expect(toSignificance(result)).toEqual({ meaningful: 0.72, inputTokens: 640 });
+  });
+
+  it("doesn't change the questions version, so earlier answers stay valid", () => {
+    expect(QUESTIONS_VERSION).toBe(2);
   });
 });

@@ -1,4 +1,4 @@
-import type { Decision, Settings } from "./decide.ts";
+import { type Decision, PERSONAL_SLUG, type Settings } from "./decide.ts";
 import { type Answers, PURGE_KINDS, type PurgeKind, QUESTIONS_VERSION } from "./questions.ts";
 
 export const KIND_SLUGS: Record<PurgeKind, string> = {
@@ -12,12 +12,25 @@ export const KIND_SLUGS: Record<PurgeKind, string> = {
   automated: "automated",
 };
 export const MAYBE = "maybe";
+export { PERSONAL_SLUG };
+
+/** The trivial personal mail category: a label of its own, but not a Jev kind. */
+export const TRIVIAL_PERSONAL = {
+  label: "Trivial personal mail",
+  description: "Personal mail from people you're not close to that Jev finds trivial: logistics, quick replies, forwards.",
+} as const;
+
+/** Every label slug in display order with its name: the kinds, trivial personal mail, then maybe. */
+export const SLUG_NAMES: readonly { slug: string; label: string }[] = [
+  ...PURGE_KINDS.map((k) => ({ slug: KIND_SLUGS[k.id], label: k.label })),
+  { slug: PERSONAL_SLUG, label: TRIVIAL_PERSONAL.label },
+];
 
 export function appLabelNames(prefix: string): string[] {
-  return [...PURGE_KINDS.map((k) => `${prefix}/${KIND_SLUGS[k.id]}`), `${prefix}/${MAYBE}`];
+  return [...PURGE_KINDS.map((k) => `${prefix}/${KIND_SLUGS[k.id]}`), `${prefix}/${PERSONAL_SLUG}`, `${prefix}/${MAYBE}`];
 }
 
-export const ALL_SLUGS: readonly string[] = [...PURGE_KINDS.map((k) => KIND_SLUGS[k.id]), MAYBE];
+export const ALL_SLUGS: readonly string[] = [...PURGE_KINDS.map((k) => KIND_SLUGS[k.id]), PERSONAL_SLUG, MAYBE];
 
 export function kindOfSlug(slug: string): PurgeKind | null {
   return PURGE_KINDS.find((k) => KIND_SLUGS[k.id] === slug)?.id ?? null;
@@ -36,10 +49,12 @@ export function suggestedSlug(answers: Answers | null): string | null {
   return KIND_SLUGS[best];
 }
 
-export function labelFor(decision: Decision, answers: Answers | null, settings: Settings): string | null {
+/** `slug` is the one decide() chose, if any; otherwise the strongest checked kind names the label. */
+export function labelFor(decision: Decision, answers: Answers | null, settings: Settings, slug?: string): string | null {
   if (decision === "keep") return null;
   if (!answers || answers.version !== QUESTIONS_VERSION) return null;
   if (decision === "review") return `${settings.labelPrefix}/${MAYBE}`;
+  if (slug !== undefined) return `${settings.labelPrefix}/${slug}`;
   let best: PurgeKind | null = null;
   for (const k of PURGE_KINDS) {
     if (!settings.purgeKinds.includes(k.id)) continue;

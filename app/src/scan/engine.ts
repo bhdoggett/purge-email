@@ -161,8 +161,8 @@ export class ScanEngine {
               return;
             }
 
-            const { decision, reason } = decide(flagsOf(summary), answers, settings, this.now());
-            const label = labelFor(decision, answers, settings);
+            const { decision, reason, slug } = decide(flagsOf(summary), answers, settings, this.now());
+            const label = labelFor(decision, answers, settings, slug);
             if (networked) pace.mark(this.now());
             const done = this.progress.done + 1;
             const msPer = pace.msPerItem();

@@ -72,6 +72,31 @@ export const QUESTIONS = {
   },
 } as const;
 
+/**
+ * Asked only for personal mail from someone who isn't close, when "Trivial personal mail" is on.
+ * Kept apart from QUESTIONS so answers saved before it existed stay valid.
+ */
+export const SIGNIFICANCE_QUESTIONS = {
+  meaningful: {
+    type: "noul",
+    instructions: "Is this email personally meaningful to keep?",
+    criteria: {
+      true: "Real news, milestones, life events, heartfelt or substantial conversation, memories, photos of people, or anything the owner would likely want to reread years later.",
+      false: "Trivial logistics (running late, see you at 5), quick acknowledgements (ok, thanks, lol), forwards, chain mail, jokes, or small talk with no lasting value.",
+    },
+  },
+} as const;
+
+export interface Significance {
+  /** Probability that the email is personally meaningful. */
+  meaningful: number;
+  inputTokens: number;
+}
+
+export function toSignificance(result: SystemOneResult<typeof SIGNIFICANCE_QUESTIONS>): Significance {
+  return { meaningful: result.answers.meaningful.noul, inputTokens: result.usage.input_tokens };
+}
+
 export interface EmailFacts {
   from: string;
   to: string;
@@ -102,6 +127,8 @@ export interface Answers {
   kind: Record<KindLabel, number>;
   protect: Record<ProtectId, number>;
   inputTokens: number;
+  /** Probability the email is personally meaningful; missing until the significance question is asked. */
+  significance?: number;
 }
 
 export function toAnswers(result: SystemOneResult<typeof QUESTIONS>): Answers {

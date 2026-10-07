@@ -16,14 +16,14 @@ export interface Effective {
 /** What decide() needs to know about an email. An unreadable Date header gives a null `receivedAt`. */
 export function flagsOf(summary: Summary): MessageFlags {
   const receivedAt = Date.parse(summary.date);
-  return { starred: summary.labels.includes("STARRED"), attachmentCount: summary.attachmentNames.length, receivedAt: Number.isNaN(receivedAt) ? null : receivedAt };
+  return { starred: summary.labels.includes("STARRED"), attachmentCount: summary.attachmentNames.length, receivedAt: Number.isNaN(receivedAt) ? null : receivedAt, senderClose: false };
 }
 
 /** The one place that turns an email into its label, so Review, Apply and reconcile never disagree. */
 export function effectiveLabel(summary: Summary, answers: Answers | null, override: Override | undefined, settings: Settings, now: number): Effective {
-  const { decision, reason } = decide(flagsOf(summary), answers, settings, now);
+  const { decision, reason, slug } = decide(flagsOf(summary), answers, settings, now);
   if (override) {
     return { label: override.slug === null ? null : `${settings.labelPrefix}/${override.slug}`, source: "override", decision, reason };
   }
-  return { label: labelFor(decision, answers, settings), source: "jev", decision, reason };
+  return { label: labelFor(decision, answers, settings, slug), source: "jev", decision, reason };
 }
