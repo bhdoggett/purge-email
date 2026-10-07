@@ -52,4 +52,8 @@ npm run spam -- --yes   # moves to Trash
 
 Options for `plan`: `--keep-at 0.5`, `--trash-below 0.1`, `--concurrency 4`.
 
-Jev judgments are cached in `reports/judgments.jsonl`, so re-running `plan` with different thresholds doesn't re-bill already-judged messages.
+Long runs are safe to stop and restart:
+
+- Email details and Jev answers are cached in `reports/summaries.jsonl` and `reports/judgments.jsonl`, so a restart skips Gmail and Jev for emails already done, and changing thresholds doesn't re-bill.
+- Gmail rate limits are retried until they clear; an email that fails for another reason is marked `review` instead of stopping the run.
+- The `purge` label is added in batches of 500 as the run goes. `reports/labeled.jsonl` records what was labeled, so a rerun never re-adds the label to something you removed it from.

@@ -85,15 +85,27 @@ function isRateLimit(err: unknown): boolean {
   return e.status === 429 || (e.status === 403 && /quota|rate limit/i.test(e.message ?? ""));
 }
 
-/** Retries Gmail calls that hit per-minute quota, backing off up to about a minute. */
+function isTransient(err: unknown): boolean {
+  const e = err as { status?: number; code?: string };
+  return (e.status !== undefined && e.status >= 500) || ["ECONNRESET", "ETIMEDOUT", "EAI_AGAIN"].includes(e.code ?? "");
+}
+
+/** Count of rate-limit waits, for progress output. */
+export const retryStats = { rateLimited: 0 };
+
+/**
+ * Retries rate limits forever (Gmail's quota is per minute, so waiting always
+ * works) and transient server/network errors a few times. Other errors throw.
+ */
 async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
   for (let attempt = 0; ; attempt++) {
     try {
       return await fn();
     } catch (err) {
-      if (!isRateLimit(err) || attempt >= 6) throw err;
-      const delay = Math.min(2 ** attempt * 2000, 60_000) * (0.75 + Math.random() * 0.5);
-      console.warn(`Gmail rate limit hit; retrying in ${Math.round(delay / 1000)}s`);
+      const rateLimited = isRateLimit(err);
+      if (!rateLimited && !(isTransient(err) && attempt < 5)) throw err;
+      if (rateLimited) retryStats.rateLimited++;
+      const delay = Math.min(2 ** Math.min(attempt, 5) * 2000, 60_000) * (0.75 + Math.random() * 0.5);
       await new Promise((r) => setTimeout(r, delay));
     }
   }
