@@ -32,6 +32,8 @@
 @import "@fontsource/ibm-plex-sans/600.css";
 
 :root {
+  /* Native controls (number spinners, checkboxes, scrollbars) follow the light or dark theme. */
+  color-scheme: light dark;
   --color-bg: #f3f5f6;
   --color-surface: #ffffff;
   --color-text: #172026;
