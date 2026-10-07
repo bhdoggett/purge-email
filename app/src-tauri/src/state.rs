@@ -28,3 +28,17 @@ impl TokenCache {
         }
     }
 }
+
+impl TokenCache {
+    /// Returns a usable access token, refreshing it when missing, near expiry, or `force` is set.
+    pub async fn access_token(&self, force: bool) -> Result<String, crate::error::AppError> {
+        if !force {
+            if let Some(t) = self.cached().await {
+                return Ok(t);
+            }
+        }
+        let (token, ttl) = crate::google::refresh_access_token(&self.http).await?;
+        self.store(token.clone(), ttl).await;
+        Ok(token)
+    }
+}

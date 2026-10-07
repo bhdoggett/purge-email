@@ -1,4 +1,7 @@
 mod error;
+mod google;
+mod oauth;
+mod proxy;
 mod secrets;
 mod state;
 
@@ -12,6 +15,8 @@ pub fn run() {
             secrets::secrets_status,
             secrets::sign_out,
             secrets::clear_secrets,
+            proxy::api_request,
+            oauth::google_sign_in,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

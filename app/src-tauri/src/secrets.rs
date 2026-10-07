@@ -43,7 +43,7 @@ pub struct GoogleClient {
 
 pub fn get_google_client() -> Result<GoogleClient, AppError> {
     let raw = get(GOOGLE_CLIENT)?.ok_or_else(|| AppError::NotConfigured("google_client".into()))?;
-    serde_json::from_str(&raw).map_err(|e| AppError::Invalid(e.to_string()))
+    serde_json::from_str(&raw).map_err(|_| AppError::Invalid("Saved Google client is malformed".into()))
 }
 
 #[derive(Serialize)]
