@@ -57,3 +57,7 @@ Long runs are safe to stop and restart:
 - Email details and Jev answers are cached in `reports/summaries.jsonl` and `reports/judgments.jsonl`, so a restart skips Gmail and Jev for emails already done, and changing thresholds doesn't re-bill.
 - Gmail rate limits are retried until they clear; an email that fails for another reason is marked `review` instead of stopping the run.
 - The `purge` label is added in batches of 500 as the run goes. `reports/labeled.jsonl` records what was labeled, so a rerun never re-adds the label to something you removed it from.
+
+## App
+
+There's also a desktop app (Tauri 2 + React) that gives you a graphical interface to the same cleanup process. Run it from the `app/` directory with `npm install` and `npm run tauri dev`. The app stores credentials in your macOS Keychain, guides you through setup in a wizard, and lets you review results before labeling anything for deletion. See [`app/README.md`](app/README.md) for details on development, testing, and building.
