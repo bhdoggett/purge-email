@@ -36,20 +36,6 @@
 .error {
   color: var(--color-danger);
 }
-.warning {
-  border: 1px solid var(--color-review);
-  border-left-width: 4px;
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  padding: var(--space-4);
-  margin: var(--space-4) 0;
-}
-.warning p {
-  margin: 0 0 var(--space-3);
-}
-.warningText {
-  font-weight: 600;
-}
 .rows {
   list-style: none;
   padding: 0;
@@ -83,19 +69,4 @@
 .rowActions {
   display: flex;
   gap: var(--space-3);
-}
-
-.note {
-  padding: var(--space-3) var(--space-4);
-  border-left: 3px solid var(--color-accent);
-  background: var(--color-surface);
-}
-.linkButton {
-  font: inherit;
-  background: none;
-  border: none;
-  padding: 0;
-  color: var(--color-accent);
-  text-decoration: underline;
-  cursor: pointer;
 }

@@ -27,7 +27,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
-  // Re-render when a scan starts or stops, so the busy note and buttons stay current.
+  // Re-render when a scan starts or stops, so the buttons stay current.
   const progress = useProgress(engine);
   const scanning = engine.isBusy();
   const wasScanning = useRef(scanning);
@@ -42,7 +42,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
       const settings = await store.getSettings();
       const scan = await store.getScan();
       // Without a finished scan there are no candidates, so a preview would strip every label.
-      if (!scan?.settingsAtScan) {
+      if (!scan?.finished || !scan.settingsAtScan) {
         setData({ kind: "noscan" });
       } else if (needsRescan(scan.settingsAtScan, settings)) {
         setData({ kind: "rescan", settings });
@@ -52,6 +52,11 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         if (isPending(preview)) {
           setData({ kind: "pending", settings, preview });
         } else {
+          // Nothing to change in Gmail, but the plan may still stamp records (e.g. an override already in effect).
+          // Save those now: applyPreview makes no Gmail calls when there is nothing to add or remove.
+          if ((preview.plan.put.length > 0 || preview.plan.del.length > 0) && !engine.isBusy()) {
+            await applyPreview({ gmail, store }, settings, preview);
+          }
           const rows = buildRows(await countByLabel(gmail, settings), settings.labelPrefix);
           setData({ kind: "done", settings, rows, deferred: preview.plan.deferred });
         }
@@ -75,9 +80,21 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
     }
     setApplying(true);
     setMessage(null);
+    setError(null);
     try {
-      await applyPreview({ gmail, store }, data.settings, data.preview);
-      setMessage(appliedMessage(data.preview, data.preview.oldPrefixes));
+      // The shown plan was stamped when the screen opened: plan again so the records carry the time of this Apply.
+      const fresh = await previewReconcile({ gmail, store }, data.settings);
+      if (!isPending(fresh)) {
+        await load();
+        return;
+      }
+      if (fresh.added !== data.preview.added || fresh.moved !== data.preview.moved || fresh.removed !== data.preview.removed) {
+        setData({ ...data, preview: fresh });
+        setMessage("Gmail changed since this screen opened. Check the new numbers, then apply.");
+        return;
+      }
+      await applyPreview({ gmail, store }, data.settings, fresh);
+      setMessage(appliedMessage(fresh, fresh.oldPrefixes));
       await load();
     } catch (e) {
       setError(`Could not apply the labels. ${errorText(e)}`);
@@ -136,14 +153,6 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
       <section className={styles.review}>
         <h1 className={styles.heading}>Ready to label</h1>
         <p className={styles.lede}>{previewSummary(preview)}</p>
-        {scanning && (
-          <p className={styles.note} role="status">
-            A scan is running, so these numbers may change.{" "}
-            <button type="button" className={styles.linkButton} onClick={() => go("scan")}>
-              See progress
-            </button>
-          </p>
-        )}
         <ul className={styles.rows}>
           {rows.map((r) => (
             <li key={r.name} className={styles.row}>
@@ -173,8 +182,17 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
   if (totalOf(rows) === 0) {
     return (
       <section className={styles.review}>
-        <h1 className={styles.heading}>Nothing labeled</h1>
-        <p className={styles.lede}>Your review gives no email a label. Go back to Review to change that.</p>
+        {data.deferred > 0 ? (
+          <>
+            <h1 className={styles.heading}>Labels are still settling</h1>
+            <p className={styles.lede}>{SETTLING_NOTE}</p>
+          </>
+        ) : (
+          <>
+            <h1 className={styles.heading}>Nothing labeled</h1>
+            <p className={styles.lede}>Your review gives no email a label. Go back to Review to change that.</p>
+          </>
+        )}
         <Button onClick={() => go("review")}>Back to Review</Button>
         {message && <p role="status">{message}</p>}
         {error && <p className={styles.error} role="alert">{error}</p>}
@@ -189,15 +207,6 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         This app only adds labels. It never deletes anything. Look through each label in Gmail. To keep an email, remove its label. Starring it isn't
         enough: selecting all and deleting in Gmail deletes everything under the label, starred mail included. Jev left the rest unlabeled.
       </p>
-
-      {scanning && (
-        <p className={styles.note} role="status">
-          A scan is running, so these numbers may change.{" "}
-          <button type="button" className={styles.linkButton} onClick={() => go("scan")}>
-            See progress
-          </button>
-        </p>
-      )}
       {message && <p role="status">{message}</p>}
       {data.deferred > 0 && <p className={styles.muted}>{SETTLING_NOTE}</p>}
       {error && <p className={styles.error} role="alert">{error}</p>}
