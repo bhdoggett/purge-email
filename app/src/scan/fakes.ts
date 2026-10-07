@@ -22,6 +22,7 @@ export interface FakeGmail extends Gmail {
   failIds: Set<string>;
   expireAfter: number | null;
   spamIds: string[];
+  trashErrors: Map<string, Error>;
 }
 
 /** In-memory Gmail. `labeled` holds IDs carrying the app's label. */
@@ -34,11 +35,12 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
     failIds: new Set(),
     expireAfter: null,
     spamIds: [],
+    trashErrors: new Map(),
     async listIds(q, limit = Infinity) {
       let ids: { id: string; threadId: string }[];
       if (q.startsWith("in:sent")) ids = [];
       else if (q === "in:spam") ids = fake.spamIds.map((id) => ({ id, threadId: id }));
-      else if (q.startsWith("label:")) ids = [...fake.labeled].filter((id) => !fake.trashed.has(id) && !byId.get(id)?.labels.includes("STARRED")).map((id) => ({ id, threadId: id }));
+      else if (q.startsWith("label:")) ids = [...fake.labeled].filter((id) => !fake.trashed.has(id) && !(q.includes("-is:starred") && byId.get(id)?.labels.includes("STARRED"))).map((id) => ({ id, threadId: id }));
       else ids = messages.map((m) => ({ id: m.id, threadId: m.threadId }));
       return ids.slice(0, limit);
     },
@@ -61,6 +63,8 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
       for (const id of ids) fake.labeled.delete(id);
     },
     async trash(id) {
+      const err = fake.trashErrors.get(id);
+      if (err) throw err;
       fake.trashed.add(id);
     },
     async getProfile() {

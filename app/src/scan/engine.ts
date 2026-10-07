@@ -1,8 +1,9 @@
 import pLimit from "p-limit";
 import { decide, type Settings } from "@core/decide.ts";
 import { type Answers, QUESTIONS_VERSION } from "@core/questions.ts";
-import { SignInExpiredError } from "../bridge/errors.ts";
-import type { Gmail, Summary } from "../gmail/client.ts";
+import { APIError } from "@typesafe-ai/sdk";
+import { AppError, SignInExpiredError } from "../bridge/errors.ts";
+import { GmailError, type Gmail, type Summary } from "../gmail/client.ts";
 import type { Judge } from "../jev/client.ts";
 import type { LabelRecord, ScanRecord, Store } from "../storage/db.ts";
 import { FEED_SIZE, INITIAL_PROGRESS, JEV_USD_PER_TOKEN, Pace, type Progress } from "./progress.ts";
@@ -13,11 +14,27 @@ export interface EngineDeps {
   store: Store;
   labelName: string;
   concurrency?: number;
+  labelBatch?: number;
   now?: () => number;
   notify?: (title: string, body: string) => void;
 }
 
 const LABEL_BATCH = 500;
+const MAX_CONSECUTIVE_FAILURES = 20;
+
+/** Errors that would hit every email (bad credentials, disabled API), so the run must stop. */
+export function isRunLevelError(err: unknown): boolean {
+  if (err instanceof AppError) return ["NotConfigured", "HostNotAllowed", "Keychain"].includes(err.payload.kind);
+  if (err instanceof APIError) return [401, 402, 403].includes(err.status);
+  if (err instanceof GmailError) return err.status === 401 || (err.status === 403 && /accessNotConfigured|SERVICE_DISABLED/.test(err.reason));
+  return false;
+}
+
+async function settleAll(tasks: Promise<unknown>[]): Promise<void> {
+  const results = await Promise.allSettled(tasks);
+  const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
+  if (failed) throw failed.reason;
+}
 
 export function candidateQuery(years: number): string {
   return `older_than:${years}y -has:attachment -is:starred -in:spam -in:trash -in:chats`;
@@ -62,7 +79,7 @@ export class ScanEngine {
 
   private async loadOrCreateScan(settings: Settings, limit?: number): Promise<ScanRecord> {
     const existing = await this.deps.store.getScan();
-    if (existing && !existing.finished && existing.years === settings.years) return existing;
+    if (!limit && existing && !existing.finished && existing.years === settings.years) return existing;
     const { gmail } = this.deps;
     const candidates = await gmail.listIds(candidateQuery(settings.years), limit);
     const sent = await gmail.listIds(`in:sent older_than:${settings.years}y`);
@@ -96,23 +113,31 @@ export class ScanEngine {
       const labelId = await gmail.ensureLabel(labelName);
       const pace = new Pace();
       const pending: string[] = [];
+      const labelBatch = this.deps.labelBatch ?? LABEL_BATCH;
       let signInExpired = false;
+      let fatal: unknown = null;
+      let consecutiveFailures = 0;
 
       const flush = async () => {
         if (pending.length === 0) return;
         const ids = pending.splice(0);
-        await gmail.addLabel(labelId, ids);
-        await store.putLabels(ids.map((id): LabelRecord => ({ id, labeledByApp: true, userRemoved: false })));
+        try {
+          await gmail.addLabel(labelId, ids);
+          await store.putLabels(ids.map((id): LabelRecord => ({ id, labeledByApp: true, userRemoved: false })));
+        } catch (err) {
+          pending.unshift(...ids);
+          throw err;
+        }
         this.set({ labeled: this.progress.labeled + ids.length });
       };
 
       this.set({ stage: "judging", total: scan.candidateIds.length });
       const run = pLimit(this.deps.concurrency ?? 4);
 
-      await Promise.all(
+      await settleAll(
         scan.candidateIds.map((id) =>
           run(async () => {
-            if (this.stopRequested || signInExpired) return;
+            if (this.stopRequested || signInExpired || fatal !== null) return;
             let summary: Summary | undefined;
             let answers: Answers | null = null;
             let networked = false;
@@ -131,12 +156,18 @@ export class ScanEngine {
                 networked = true;
                 this.set({ costUsd: this.progress.costUsd + answers.inputTokens * JEV_USD_PER_TOKEN });
               }
+              consecutiveFailures = 0;
             } catch (err) {
               if (err instanceof SignInExpiredError) {
                 signInExpired = true;
                 return;
               }
+              if (isRunLevelError(err)) {
+                fatal = err;
+                return;
+              }
               console.error(`scan failed for ${id}`, err);
+              if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) fatal = err;
               const counts = { ...this.progress.counts, review: this.progress.counts.review + 1, failed: this.progress.counts.failed + 1 };
               this.set({ counts, done: this.progress.done + 1 });
               return;
@@ -150,7 +181,15 @@ export class ScanEngine {
             if (decision === "purge" && !labels.has(id)) {
               labels.set(id, { id, labeledByApp: true, userRemoved: false });
               pending.push(id);
-              if (pending.length >= LABEL_BATCH) await flush();
+              if (pending.length >= labelBatch) {
+                try {
+                  await flush();
+                } catch (err) {
+                  if (err instanceof SignInExpiredError) signInExpired = true;
+                  else fatal = err;
+                  return;
+                }
+              }
             }
             if (networked) pace.mark(this.now());
             const done = this.progress.done + 1;
@@ -166,7 +205,7 @@ export class ScanEngine {
         ),
       );
 
-      if (!signInExpired) {
+      if (!signInExpired && fatal === null) {
         this.set({ stage: "labeling" });
         await flush();
       }
@@ -175,6 +214,9 @@ export class ScanEngine {
       if (signInExpired) {
         await store.putScan({ ...scan, msPerEmail });
         this.set({ stage: "signInExpired", etaMs: null });
+      } else if (fatal !== null) {
+        await store.putScan({ ...scan, msPerEmail });
+        this.set({ stage: "error", error: fatal, etaMs: null });
       } else if (this.stopRequested) {
         await store.putScan({ ...scan, msPerEmail });
         this.set({ stage: "paused", etaMs: null });
@@ -202,21 +244,48 @@ export class ScanEngine {
       this.set({ stage: "trashing", total: ids.length });
       const pace = new Pace();
       const run = pLimit(this.deps.concurrency ?? 4);
-      await Promise.all(
+      let signInExpired = false;
+      let fatal: unknown = null;
+      await settleAll(
         ids.map((id) =>
           run(async () => {
-            if (this.stopRequested) return;
-            await gmail.trash(id);
+            if (this.stopRequested || signInExpired || fatal !== null) return;
+            let failed = 0;
+            try {
+              await gmail.trash(id);
+            } catch (err) {
+              if (err instanceof SignInExpiredError) {
+                signInExpired = true;
+                return;
+              }
+              if (isRunLevelError(err)) {
+                fatal = err;
+                return;
+              }
+              // Already gone (404) counts as done; anything else is a per-message failure.
+              if (!(err instanceof GmailError && err.status === 404)) {
+                console.error(`trash failed for ${id}`, err);
+                failed = 1;
+              }
+            }
             pace.mark(this.now());
             const done = this.progress.done + 1;
             const msPer = pace.msPerItem();
-            this.set({ done, etaMs: msPer === null ? null : msPer * (ids.length - done) });
+            this.set({
+              done,
+              counts: { ...this.progress.counts, failed: this.progress.counts.failed + failed },
+              etaMs: msPer === null ? null : msPer * (ids.length - done),
+            });
           }),
         ),
       );
-      this.set({ stage: this.stopRequested ? "paused" : "done", etaMs: null });
-      if (!this.stopRequested) {
-        this.deps.notify?.(job === "spam" ? "Spam emptied" : "Moved to Trash", `${this.progress.done} emails moved to Trash.`);
+      if (signInExpired) this.set({ stage: "signInExpired", etaMs: null });
+      else if (fatal !== null) this.set({ stage: "error", error: fatal, etaMs: null });
+      else {
+        this.set({ stage: this.stopRequested ? "paused" : "done", etaMs: null });
+        if (!this.stopRequested) {
+          this.deps.notify?.(job === "spam" ? "Spam emptied" : "Moved to Trash", `${this.progress.done} emails processed.`);
+        }
       }
     } catch (err) {
       this.set({ stage: err instanceof SignInExpiredError ? "signInExpired" : "error", error: err, etaMs: null });
