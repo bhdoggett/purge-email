@@ -5,6 +5,7 @@ import { createGmail, type Gmail } from "./gmail/client.ts";
 import { createJudge, createSignificanceJudge } from "./jev/client.ts";
 import { rateLimit } from "./rateLimit.ts";
 import { ApplyRunner } from "./scan/applyRunner.ts";
+import { CloseCounter } from "./scan/closeCounter.ts";
 import { ScanEngine } from "./scan/engine.ts";
 import { DEFAULT_SETTINGS } from "@core/decide.ts";
 import { importDataKey } from "./storage/crypto.ts";
@@ -17,6 +18,7 @@ export interface Services {
   gmail: Gmail;
   engine: ScanEngine;
   applier: ApplyRunner;
+  counter: CloseCounter;
 }
 
 /** Best effort: a notification that can't be shown is not worth an error. */
@@ -50,10 +52,18 @@ export function getServices(): Promise<Services> {
   services ??= (async () => {
     const store = await openStore(getDataKey, undefined, { ...DEFAULT_SETTINGS, labelPrefix: DEFAULT_PREFIX });
     const gmail = createGmail({ fetch: proxyFetch, onRateLimit: (until) => rateLimit.set(until) });
-    // Each checks the other before it starts: a scan and an Apply never run together.
-    const applier: ApplyRunner = new ApplyRunner({ gmail, store, isScanning: () => engine.isBusy() });
-    const engine: ScanEngine = new ScanEngine({ gmail, judge: createJudge(), judgeSignificance: createSignificanceJudge(), store, notify: (t, b) => void notify(t, b), isBlocked: () => applier.busy() });
-    return { store, gmail, engine, applier };
+    // Each checks the others before it starts: a scan, an Apply and counting sent mail never run together.
+    const applier: ApplyRunner = new ApplyRunner({ gmail, store, isScanning: () => engine.isBusy(), isCounting: () => counter.busy() });
+    const engine: ScanEngine = new ScanEngine({
+      gmail,
+      judge: createJudge(),
+      judgeSignificance: createSignificanceJudge(),
+      store,
+      notify: (t, b) => void notify(t, b),
+      isBlocked: () => applier.busy() || counter.busy(),
+    });
+    const counter: CloseCounter = new CloseCounter({ gmail, store, isBlocked: () => engine.isBusy() || applier.busy() });
+    return { store, gmail, engine, applier, counter };
   })();
   services.catch(() => {
     services = null;

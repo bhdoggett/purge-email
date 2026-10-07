@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
+import { COUNTING_HINT, isCounting, useCounter } from "../useCounter.ts";
 import type { Answers } from "@core/questions.ts";
-import { PURGE_KINDS } from "@core/questions.ts";
 import type { Settings } from "@core/decide.ts";
-import { KIND_SLUGS, MAYBE, needsRescan } from "@core/labels.ts";
+import { MAYBE, needsRescan, SLUG_NAMES } from "@core/labels.ts";
 import type { Screen } from "../App.tsx";
 import { AgeInput } from "../components/AgeInput.tsx";
 import { Button } from "../components/Button.tsx";
@@ -50,7 +50,8 @@ const DECISIONS: { id: DecisionFilter; label: string }[] = [
   { id: "changed", label: "Changed by you" },
 ];
 
-const KINDS = PURGE_KINDS.map((k) => ({ slug: KIND_SLUGS[k.id], label: k.label }));
+/** Categories for the filter and "Move to": the kinds, then trivial personal mail. */
+const KINDS = SLUG_NAMES;
 
 const SAVE_FAILED = "Couldn't save your change. Try again.";
 
@@ -68,6 +69,7 @@ function typingInField(target: EventTarget | null): boolean {
 export function Review({ services, go, onNext }: { services: Services; go: (s: Screen) => void; onNext: () => void }) {
   const { store, engine } = services;
   const applying = isApplying(useApplier(services.applier));
+  const counting = isCounting(useCounter(services.counter));
   const [data, setData] = useState<Loaded | null>(null);
   const [overrides, setOverrides] = useState<Map<string, Override>>(new Map());
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -183,7 +185,7 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
 
   function rescan() {
     if (!data) return;
-    if (engine.isBusy()) {
+    if (engine.isBusy() || services.counter.busy()) {
       setError("Another job is running. Wait for it to finish.");
       return;
     }
@@ -217,7 +219,7 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
       <section className={styles.review}>
         <h1 className={styles.heading}>Rescan needed</h1>
         <p className={styles.lede}>You lowered the age or turned off a protection under "Always keep", so some emails were never scanned. Only a new scan finds them.</p>
-        <Button disabled={applying} title={applying ? APPLYING_HINT : undefined} onClick={rescan}>Rescan</Button>
+        <Button disabled={applying || counting} title={applying ? APPLYING_HINT : counting ? COUNTING_HINT : undefined} onClick={rescan}>Rescan</Button>
         {error && <p className={styles.error} role="alert">{error}</p>}
       </section>
     );

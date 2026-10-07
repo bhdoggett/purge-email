@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { type Settings, type Strictness } from "@core/decide.ts";
-import { needsRescan, validatePrefix } from "@core/labels.ts";
+import { needsRescan, TRIVIAL_PERSONAL, validatePrefix } from "@core/labels.ts";
 import { PROTECTS, PURGE_KINDS } from "@core/questions.ts";
 import { AgeInput } from "../components/AgeInput.tsx";
 import { Button } from "../components/Button.tsx";
@@ -12,6 +12,8 @@ import { prefixInUseByUser } from "../scan/reconcile.ts";
 import type { ScanRecord } from "../storage/db.ts";
 import type { Services } from "../services.ts";
 import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
+import { COUNTING_HINT, isCounting, useCounter } from "../useCounter.ts";
+import { ClosePeople } from "./ClosePeople.tsx";
 import { useProgress } from "../useProgress.ts";
 import type { Screen } from "../App.tsx";
 import styles from "./Rules.module.css";
@@ -26,6 +28,7 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
   const progress = useProgress(services.engine);
   const busy = services.engine.isBusy();
   const applying = isApplying(useApplier(services.applier));
+  const counting = isCounting(useCounter(services.counter));
   const [settings, setSettings] = useState<Settings | null>(null);
   const [scan, setScan] = useState<ScanRecord | null>(null);
   const [est, setEst] = useState<Awaited<ReturnType<typeof estimate>> | null>(null);
@@ -104,6 +107,8 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
           {PURGE_KINDS.map((k) => (
             <Checkbox key={k.id} label={k.label} description={k.examples} checked={settings.purgeKinds.includes(k.id)} onChange={(on) => update({ purgeKinds: toggle(settings.purgeKinds, k.id, on) })} />
           ))}
+          <Checkbox label={TRIVIAL_PERSONAL.label} description={TRIVIAL_PERSONAL.description} checked={settings.trivialPersonal} onChange={(on) => update({ trivialPersonal: on })} />
+          {settings.trivialPersonal && <p className={styles.choiceNote}>Start a scan to check personal emails. Already-judged emails aren't judged again.</p>}
         </fieldset>
 
         <fieldset className={styles.group} disabled={busy}>
@@ -117,6 +122,8 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
           {!settings.keepStarred && <p className={styles.choiceNote}>Starred emails can be labeled too.</p>}
         </fieldset>
       </div>
+
+      {settings.trivialPersonal && <ClosePeople services={services} />}
 
       <fieldset className={styles.group} disabled={busy}>
         <legend className={styles.legend}>How sure should Jev be?</legend>
@@ -186,7 +193,8 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
               : "Counting emails…"}
         </p>
         {applying && <p className={styles.note}>{APPLYING_HINT}</p>}
-        <Button disabled={busy || applying || est?.count === 0 || prefixError !== null} onClick={startScan}>
+        {counting && <p className={styles.note}>{COUNTING_HINT}</p>}
+        <Button disabled={busy || applying || counting || est?.count === 0 || prefixError !== null} onClick={startScan}>
           {resumable ? "Resume scan" : "Start scan"}
         </Button>
       </div>

@@ -24,6 +24,8 @@ export interface ApplyRunnerDeps {
   store: Store;
   /** True while a scan is running; Apply and a scan never run together. */
   isScanning: () => boolean;
+  /** True while sent mail is being counted for close people; Apply waits for it too. */
+  isCounting?: () => boolean;
   now?: () => number;
 }
 
@@ -60,7 +62,7 @@ export class ApplyRunner {
 
   /** Reads Gmail and plans. When nothing is pending, saves the plan's store-only changes and counts the labels. */
   async check(settings: Settings): Promise<ApplyState> {
-    if (this.running || this.deps.isScanning()) return this.state;
+    if (this.running || this.deps.isScanning() || this.deps.isCounting?.()) return this.state;
     this.running = true;
     try {
       // The last applied message stays until the next apply.
@@ -93,6 +95,10 @@ export class ApplyRunner {
     if (this.running) return this.state;
     if (this.deps.isScanning()) {
       this.set({ ...this.state, error: "A scan is running. Apply after it finishes." });
+      return this.state;
+    }
+    if (this.deps.isCounting?.()) {
+      this.set({ ...this.state, error: "Your sent mail is being counted. Apply after it finishes." });
       return this.state;
     }
     this.running = true;

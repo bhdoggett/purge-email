@@ -1,4 +1,4 @@
-import { KIND_SLUGS, MAYBE } from "@core/labels.ts";
+import { KIND_SLUGS, MAYBE, PERSONAL_SLUG } from "@core/labels.ts";
 import { PURGE_KINDS } from "@core/questions.ts";
 
 export interface ApplyRow {
@@ -7,7 +7,7 @@ export interface ApplyRow {
   isMaybe: boolean;
 }
 
-/** One row per label with mail in it: kinds in PURGE_KINDS order, then maybe. */
+/** One row per label with mail in it: kinds in PURGE_KINDS order, trivial personal mail, then maybe. */
 export function buildRows(totals: Map<string, number>, prefix: string): ApplyRow[] {
   const rows: ApplyRow[] = [];
   for (const k of PURGE_KINDS) {
@@ -15,6 +15,9 @@ export function buildRows(totals: Map<string, number>, prefix: string): ApplyRow
     const count = totals.get(name) ?? 0;
     if (count > 0) rows.push({ name, count, isMaybe: false });
   }
+  const personal = `${prefix}/${PERSONAL_SLUG}`;
+  const personalCount = totals.get(personal) ?? 0;
+  if (personalCount > 0) rows.push({ name: personal, count: personalCount, isMaybe: false });
   const maybe = `${prefix}/${MAYBE}`;
   const maybeCount = totals.get(maybe) ?? 0;
   if (maybeCount > 0) rows.push({ name: maybe, count: maybeCount, isMaybe: true });

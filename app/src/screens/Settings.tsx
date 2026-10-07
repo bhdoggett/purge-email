@@ -3,6 +3,7 @@ import { clearSecrets, signOut } from "../bridge/tauri.ts";
 import { Button } from "../components/Button.tsx";
 import type { Services } from "../services.ts";
 import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
+import { COUNTING_HINT, isCounting, useCounter } from "../useCounter.ts";
 import { forgetSteps, removeKeys, SIGN_IN_STEPS } from "../wizard/steps.ts";
 import styles from "./Settings.module.css";
 
@@ -10,8 +11,9 @@ export function Settings({ services, email, onChanged, onBack }: { services: Ser
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [pending, setPending] = useState(false);
   const applying = isApplying(useApplier(services.applier));
-  const busy = services.engine.isBusy() || applying || pending;
-  const hint = applying ? APPLYING_HINT : undefined;
+  const counting = isCounting(useCounter(services.counter));
+  const busy = services.engine.isBusy() || applying || counting || pending;
+  const hint = applying ? APPLYING_HINT : counting ? COUNTING_HINT : undefined;
 
   async function act(fn: () => Promise<void>, done: string) {
     if (pending) return;

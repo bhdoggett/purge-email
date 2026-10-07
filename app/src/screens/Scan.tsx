@@ -9,6 +9,7 @@ import { scanCounts } from "../scan/reconcile.ts";
 import type { ScanRecord } from "../storage/db.ts";
 import type { Services } from "../services.ts";
 import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
+import { COUNTING_HINT, isCounting, useCounter } from "../useCounter.ts";
 import { useProgress } from "../useProgress.ts";
 import { errorToStep } from "../wizard/errorToStep.ts";
 import styles from "./Scan.module.css";
@@ -24,6 +25,7 @@ const STAGE_COPY: Record<string, string> = {
 export function Scan({ services, go, openWizard }: { services: Services; go: (s: Screen) => void; openWizard: (t: WizardTarget) => void }) {
   const p = useProgress(services.engine);
   const applying = isApplying(useApplier(services.applier));
+  const counting = isCounting(useCounter(services.counter));
   const running = services.engine.isBusy();
   const stage = p.stage === "judging" ? `Reading and judging ${p.done.toLocaleString()} of ${p.total.toLocaleString()}` : (STAGE_COPY[p.stage] ?? "");
   const mapped = p.error ? errorToStep(p.error) : null;
@@ -123,7 +125,7 @@ export function Scan({ services, go, openWizard }: { services: Services; go: (s:
 
       <div className={styles.actions}>
         {running && <Button variant="secondary" onClick={() => services.engine.pause()}>Pause</Button>}
-        {!running && p.job === "scan" && p.stage === "paused" && <Button disabled={applying} title={applying ? APPLYING_HINT : undefined} onClick={() => void resume()}>Resume</Button>}
+        {!running && p.job === "scan" && p.stage === "paused" && <Button disabled={applying || counting} title={applying ? APPLYING_HINT : counting ? COUNTING_HINT : undefined} onClick={() => void resume()}>Resume</Button>}
         {!running && p.stage === "signInExpired" && (
           <Button
             onClick={() =>

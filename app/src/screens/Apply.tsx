@@ -11,6 +11,7 @@ import { isPending, type ReadStep } from "../scan/reconcile.ts";
 import type { Services } from "../services.ts";
 import { buildRows, gmailLabelUrl, previewSummary, SETTLING_NOTE, totalOf } from "./applyModel.ts";
 import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
+import { COUNTING_HINT, isCounting, useCounter } from "../useCounter.ts";
 import { useProgress } from "../useProgress.ts";
 import styles from "./Apply.module.css";
 
@@ -38,6 +39,13 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
     if (wasScanning.current && !scanning) void load();
     wasScanning.current = scanning;
   }, [scanning, progress.stage]);
+  // Counting sent mail holds Apply back and can change who is close: check again once it ends.
+  const counting = isCounting(useCounter(services.counter));
+  const wasCounting = useRef(counting);
+  useEffect(() => {
+    if (wasCounting.current && !counting) void load();
+    wasCounting.current = counting;
+  }, [counting]);
 
   async function load() {
     try {
@@ -70,7 +78,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
 
   function rescan() {
     if (gate?.kind !== "rescan" || working) return;
-    if (engine.isBusy()) return;
+    if (engine.isBusy() || counting) return;
     void engine.start(gate.settings, { limit: DEV_SCAN_LIMIT });
     go("scan");
   }
@@ -116,7 +124,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
       <section className={styles.review}>
         <h1 className={styles.heading}>Rescan needed</h1>
         <p className={styles.lede}>You lowered the age or turned off a protection under "Always keep", so some emails were never scanned. Only a new scan finds them.</p>
-        <Button disabled={scanning || working} title={working ? APPLYING_HINT : undefined} onClick={rescan}>Rescan</Button>
+        <Button disabled={scanning || working || counting} title={working ? APPLYING_HINT : counting ? COUNTING_HINT : undefined} onClick={rescan}>Rescan</Button>
         {state.error && <p className={styles.error} role="alert">{state.error}</p>}
       </section>
     );
@@ -125,7 +133,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
   if (state.phase === "checking" || state.phase === "idle") {
     return (
       <section className={styles.review}>
-        <p className={styles.loading}>{stepText(state.step)}</p>
+        <p className={styles.loading}>{counting && state.phase === "idle" ? COUNTING_HINT : stepText(state.step)}</p>
         <RateLimitNote className={styles.muted} />
       </section>
     );
@@ -163,7 +171,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         )}
         {preview.plan.deferred > 0 && <p className={styles.muted}>{SETTLING_NOTE}</p>}
         <div className={styles.actions}>
-          <Button disabled={scanning} onClick={apply}>Apply labels</Button>
+          <Button disabled={scanning || counting} title={counting ? COUNTING_HINT : undefined} onClick={apply}>Apply labels</Button>
         </div>
         {message && <p role="status">{message}</p>}
         {error && <p className={styles.error} role="alert">{error}</p>}

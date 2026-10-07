@@ -135,6 +135,23 @@ describe("ApplyRunner", () => {
     expect(runner.busy()).toBe(false);
   });
 
+  it("neither checks nor applies while sent mail is being counted", async () => {
+    const { runner, gmail, store } = await arrange(["a"]);
+    await runner.check(DEFAULT_SETTINGS);
+    let counting = true;
+    const blocked = new ApplyRunner({ gmail, store, isScanning: () => false, isCounting: () => counting, now: () => NOW });
+    const findLabelId = vi.spyOn(gmail, "findLabelId");
+    await blocked.check(DEFAULT_SETTINGS);
+    expect(findLabelId).not.toHaveBeenCalled();
+    const addLabel = vi.spyOn(gmail, "addLabel");
+    await blocked.apply(DEFAULT_SETTINGS, runner.getState().preview!);
+    expect(addLabel).not.toHaveBeenCalled();
+    expect(blocked.getState().error).toBe("Your sent mail is being counted. Apply after it finishes.");
+    counting = false;
+    await blocked.check(DEFAULT_SETTINGS);
+    expect(blocked.getState().phase).toBe("done");
+  });
+
   it("shows the new numbers instead of writing when Gmail changed", async () => {
     const { runner, gmail, store } = await arrange();
     const stale = await previewReconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);

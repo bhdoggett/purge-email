@@ -8,6 +8,11 @@ describe("applyModel", () => {
     expect(buildRows(counts, "purge").map((r) => r.name)).toEqual(["purge/newsletter", "purge/shipping", "purge/maybe"]);
   });
 
+  it("puts trivial personal mail after the kinds and before maybe", () => {
+    const withPersonal = new Map([...counts, ["purge/personal", 3]]);
+    expect(buildRows(withPersonal, "purge").map((r) => r.name)).toEqual(["purge/newsletter", "purge/shipping", "purge/personal", "purge/maybe"]);
+  });
+
   it("totals all rows", () => {
     expect(totalOf(buildRows(counts, "purge"))).toBe(11);
   });
