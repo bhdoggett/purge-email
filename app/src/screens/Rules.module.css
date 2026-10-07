@@ -113,12 +113,12 @@
   padding-top: var(--space-5);
   border-top: 1px solid var(--color-border);
 }
-.years {
+.age {
   display: flex;
   align-items: center;
   gap: var(--space-2);
 }
-.years input {
+.age input {
   width: 5em;
   font: inherit;
   padding: var(--space-1) var(--space-2);

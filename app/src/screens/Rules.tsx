@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { type Settings, type Strictness } from "@core/decide.ts";
 import { needsRescan, validatePrefix } from "@core/labels.ts";
 import { PROTECTS, PURGE_KINDS } from "@core/questions.ts";
+import { AgeInput } from "../components/AgeInput.tsx";
 import { Button } from "../components/Button.tsx";
 import { Checkbox } from "../components/Checkbox.tsx";
 import { formatDuration, formatUsd, labelPreview } from "../format.ts";
@@ -42,7 +43,7 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
     setEstError(null);
     estimate(services, settings, limit).then(setEst, (e) => setEstError(e instanceof Error ? e.message : String(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [services, settings?.years, settings?.keepAttachments, settings?.keepStarred, limit]);
+  }, [services, settings?.ageMonths, settings?.keepAttachments, settings?.keepStarred, limit]);
 
   // Warn when the chosen name's labels already hold mail the app didn't label. Waits for typing to pause.
   useEffect(() => {
@@ -153,13 +154,9 @@ export function Rules({ services, go }: { services: Services; go: (s: Screen) =>
       </div>
 
       <div className={styles.footer}>
-        <label className={styles.years}>
-          Older than
-          <input type="number" min={0} max={30} value={settings.years} disabled={busy} onChange={(e) => update({ years: Math.min(30, Math.max(0, Math.round(Number(e.target.value) || 0))) })} />
-          years{settings.years === 0 && " (any age)"}
-        </label>
+        <AgeInput months={settings.ageMonths} disabled={busy} onChange={(ageMonths) => update({ ageMonths })} />
         {import.meta.env.DEV && (
-          <label className={styles.years}>
+          <label className={styles.age}>
             Limit (dev)
             <input type="number" min={1} value={limit ?? ""} onChange={(e) => setLimit(e.target.value ? Number(e.target.value) : undefined)} />
           </label>

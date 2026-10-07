@@ -139,7 +139,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
     return (
       <section className={styles.review}>
         <h1 className={styles.heading}>Rescan needed</h1>
-        <p className={styles.lede}>You changed the age or what's always kept. Only a new scan finds the right emails.</p>
+        <p className={styles.lede}>You lowered the age or turned off a protection under "Always keep", so some emails were never scanned. Only a new scan finds them.</p>
         <Button disabled={scanning} onClick={rescan}>Rescan</Button>
         {error && <p className={styles.error} role="alert">{error}</p>}
       </section>

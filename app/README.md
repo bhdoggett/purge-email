@@ -88,7 +88,7 @@ See "Setup Wizard" above for the 6-step process that configures your Jev key, Go
 
 ### Rules
 
-Choose which kinds of messages Jev should label for purging (newsletters, promotions, social, security alerts, shipping, scams, work, automated) and which to always keep (personal correspondence, receipts, account records, etc.). Two more checkboxes under "Always keep" protect emails with attachments and starred emails; both are on by default. Choose a strictness level (Careful, Balanced, or Aggressive), set the age threshold (default: 10 years; 0 means any age), and pick the label name. Labels look like `purge/newsletter`, with `purge/maybe` for mail Jev wasn't sure about. If labels under the chosen name already hold mail the app didn't label (probably your own labels), Rules warns: "Labels under '<name>' already exist in your Gmail. Pick a different name so the app doesn't mix with your own labels." The app never removes or moves a label it has no record of adding. In development builds only, you can set a scan limit (the "Limit (dev)" field).
+Choose which kinds of messages Jev should label for purging (newsletters, promotions, social, security alerts, shipping, scams, work, automated) and which to always keep (personal correspondence, receipts, account records, etc.). Two more checkboxes under "Always keep" protect emails with attachments and starred emails; both are on by default. Choose a strictness level (Careful, Balanced, or Aggressive), set the age: "Older than" a number of months or years (default: 10 years; 0 means any age), and pick the label name. Labels look like `purge/newsletter`, with `purge/maybe` for mail Jev wasn't sure about. If labels under the chosen name already hold mail the app didn't label (probably your own labels), Rules warns: "Labels under '<name>' already exist in your Gmail. Pick a different name so the app doesn't mix with your own labels." The app never removes or moves a label it has no record of adding. In development builds only, you can set a scan limit (the "Limit (dev)" field).
 
 ### Scan
 
@@ -105,13 +105,15 @@ Email bodies and attachments are never sent to Jev. The scan runs in the backgro
 
 Scan only judges your mail and saves the results on this computer. It doesn't touch Gmail, so no labels appear there during a scan. Review shows every scanned email in a table with its sender, subject, date, label and Jev's reason.
 
-- **Filter** by decision (Purge, Maybe, Keep, or Changed by you), by category, or by text in the sender or subject.
+- **Filter** by decision (Purge, Maybe, Keep, or Changed by you), by category, by text in the sender or subject, or by age ("Older than" a number of months or years; empty means any age). The age filter leaves out emails whose date can't be read.
 - **Select** rows with a click, Cmd-click to add or remove one, Shift-click for a range, or Cmd-A for every row the filters show.
 - **Change** the selected emails with **Use suggested label**, **Move to** a label, **Maybe**, **Keep (no label)**, or **Undo my change**.
 
 Your changes are saved on this computer, cost nothing, and don't run Jev again. They survive rescans and Settings → Clear scan data. Nothing reaches Gmail until you apply.
 
-If you changed the age, the attachment checkbox or the starred checkbox since the scan, Review asks you to rescan first: only a new scan finds the right emails.
+While an age is set, mail newer than it is kept with the reason "Kept: newer than …", and so is mail whose date can't be read.
+
+Raising the age or turning on the attachment or starred checkbox after a scan needs no rescan: the scanned emails that no longer fit are kept, and Apply removes the labels the app gave them, unless you chose a label for them in Review. Lowering the age (or setting it to 0) or turning off the attachment or starred checkbox could include emails the scan never looked at, so Review and Apply ask you to rescan first.
 
 ### Apply
 

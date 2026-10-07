@@ -71,6 +71,9 @@
   background: var(--color-surface);
   color: var(--color-text);
 }
+.ageFilter {
+  font-size: var(--text-sm);
+}
 .search {
   flex: 1 1 14rem;
   min-width: 0;

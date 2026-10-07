@@ -4,6 +4,7 @@ import { PURGE_KINDS } from "@core/questions.ts";
 import type { Settings } from "@core/decide.ts";
 import { KIND_SLUGS, MAYBE, needsRescan } from "@core/labels.ts";
 import type { Screen } from "../App.tsx";
+import { AgeInput } from "../components/AgeInput.tsx";
 import { Button } from "../components/Button.tsx";
 import type { Summary } from "../gmail/client.ts";
 import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
@@ -26,6 +27,8 @@ import styles from "./Review.module.css";
 
 interface Loaded {
   settings: Settings;
+  /** When the scan was loaded: the moment ages are measured from, so rows don't shift while the screen is open. */
+  now: number;
   /** No finished scan, e.g. after Settings → Clear scan data. */
   noscan: boolean;
   rescan: boolean;
@@ -77,6 +80,7 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
       setOverrides(saved);
       setData({
         settings,
+        now: Date.now(),
         noscan: !scan?.finished || !scan.settingsAtScan,
         rescan: !!scan?.settingsAtScan && needsRescan(scan.settingsAtScan, settings),
         ids: scan?.candidateIds ?? [],
@@ -92,8 +96,8 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
     void load();
   }, []);
 
-  const rows = useMemo(() => (data ? buildTableRows(data.ids, data.summaries, data.answers, overrides, data.settings) : []), [data, overrides]);
-  const filtered = useMemo(() => filterRows(rows, filters), [rows, filters]);
+  const rows = useMemo(() => (data ? buildTableRows(data.ids, data.summaries, data.answers, overrides, data.settings, data.now) : []), [data, overrides]);
+  const filtered = useMemo(() => filterRows(rows, filters, data?.now ?? Date.now()), [rows, filters, data]);
   // An action can move selected rows out of the filtered list (e.g. "Undo my change" under "Changed by you").
   // Drop them before paint so the next action never changes an email the person can't see.
   // Filter changes already clear the selection, so this only bites after an action rebuilds the rows.
@@ -205,7 +209,7 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
     return (
       <section className={styles.review}>
         <h1 className={styles.heading}>Rescan needed</h1>
-        <p className={styles.lede}>You changed the age or what's always kept. Only a new scan finds the right emails.</p>
+        <p className={styles.lede}>You lowered the age or turned off a protection under "Always keep", so some emails were never scanned. Only a new scan finds them.</p>
         <Button onClick={rescan}>Rescan</Button>
         {error && <p className={styles.error} role="alert">{error}</p>}
       </section>
@@ -241,6 +245,7 @@ export function Review({ services, go, onNext }: { services: Services; go: (s: S
           value={filters.text}
           onChange={(e) => changeFilters({ text: e.target.value })}
         />
+        <AgeInput className={styles.ageFilter} months={filters.olderThanMonths} zero="placeholder" onChange={(olderThanMonths) => changeFilters({ olderThanMonths })} />
         <p className={styles.count} role="status">
           Showing {filtered.length.toLocaleString()} of {rows.length.toLocaleString()}
         </p>
