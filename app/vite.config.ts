@@ -4,7 +4,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  server: { port: 1420, strictPort: true, fs: { allow: [".."] } },
+  server: { port: 1421, strictPort: true, fs: { allow: [".."] } },
   resolve: { alias: { "@core": new URL("../core", import.meta.url).pathname } },
   test: {
     environment: "node",
