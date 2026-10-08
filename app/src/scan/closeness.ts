@@ -1,13 +1,9 @@
 import pLimit from "p-limit";
 import type { Gmail } from "../gmail/client.ts";
-import type { SenderStat, SenderStats, Store } from "../storage/db.ts";
+import { type CloseRule, DEFAULT_CLOSE_RULE, type SenderStat, type SenderStats, type Store } from "../storage/db.ts";
 
-export type { SenderStat, SenderStats };
-
-/** Someone is close, unless the user says otherwise, after this many emails sent to them... */
-export const CLOSE_MIN_SENT = 10;
-/** ...spread over at least this many different years. */
-export const CLOSE_MIN_YEARS = 2;
+export type { CloseRule, SenderStat, SenderStats };
+export { DEFAULT_CLOSE_RULE };
 
 /** Sent emails read between saves, so an interrupted count resumes from the last save. */
 export const COUNT_BATCH = 200;
@@ -85,18 +81,19 @@ export function senderAddress(from: string): string | null {
 
 /**
  * Who counts as close: an explicit tick wins either way; with none, someone the user wrote to at
- * least CLOSE_MIN_SENT times over at least CLOSE_MIN_YEARS years.
+ * least `rule.minSent` times over at least `rule.minYears` different years.
  */
-export function closeSet(stats: SenderStats | null, choices: Record<string, boolean>): Set<string> {
+export function closeSet(stats: SenderStats | null, choices: Record<string, boolean>, rule: CloseRule = DEFAULT_CLOSE_RULE): Set<string> {
   const close = new Set<string>();
   for (const p of stats?.people ?? []) {
-    if (choices[p.address] === undefined && isAutoClose(p)) close.add(p.address);
+    if (choices[p.address] === undefined && isAutoClose(p, rule)) close.add(p.address);
   }
   for (const [address, on] of Object.entries(choices)) if (on) close.add(address);
   return close;
 }
 
-export const isAutoClose = (p: Pick<SenderStat, "sent" | "years">): boolean => p.sent >= CLOSE_MIN_SENT && p.years.length >= CLOSE_MIN_YEARS;
+export const isAutoClose = (p: Pick<SenderStat, "sent" | "years">, rule: CloseRule = DEFAULT_CLOSE_RULE): boolean =>
+  p.sent >= rule.minSent && p.years.length >= rule.minYears;
 
 /** Who is close, as every decision needs it. */
 export interface CloseContext {
@@ -115,10 +112,10 @@ export const NO_CLOSE: CloseContext = { close: new Set(), own: null, known: fals
  * missing, unfinished, or from another account give NO_CLOSE.
  */
 export async function loadCloseContext(store: Store, account: string | null): Promise<CloseContext> {
-  const [stats, choices] = await Promise.all([store.getSenderStats(), store.getCloseChoices()]);
+  const [stats, choices, rule] = await Promise.all([store.getSenderStats(), store.getCloseChoices(), store.getCloseRule()]);
   const own = account?.toLowerCase() ?? null;
   if (!stats || stats.complete !== true || own === null || stats.ownAddress !== own) return NO_CLOSE;
-  return { close: closeSet(stats, choices), own, known: true };
+  return { close: closeSet(stats, choices, rule), own, known: true };
 }
 
 /** The signed-in Gmail address, lowercase, or null when Gmail can't say (then nobody is known to be close). */

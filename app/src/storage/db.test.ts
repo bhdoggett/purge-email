@@ -479,6 +479,14 @@ describe("close people data", () => {
     }
   });
 
+  it("saves the auto-close rule, defaulting to 25 emails over 3 years, and keeps it when scan data is cleared", async () => {
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
+    expect(await store.getCloseRule()).toEqual({ minSent: 25, minYears: 3 });
+    await store.putCloseRule({ minSent: 50, minYears: 5 });
+    await store.clearScanData();
+    expect(await store.getCloseRule()).toEqual({ minSent: 50, minYears: 5 });
+  });
+
   it("keeps them when scan data is cleared", async () => {
     const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     await store.putSenderStats(stats);

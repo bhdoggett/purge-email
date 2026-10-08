@@ -48,6 +48,13 @@ export interface SenderStat {
 }
 
 /** Counts from the user's Sent mail. Stored encrypted, with the ids already counted so a recount only reads new mail. */
+/** Who is ticked as close automatically: at least `minSent` emails sent to them over at least `minYears` different years. */
+export interface CloseRule {
+  minSent: number;
+  minYears: number;
+}
+export const DEFAULT_CLOSE_RULE: CloseRule = { minSent: 25, minYears: 3 };
+
 export interface SenderStats {
   /** The account the counts belong to, lowercase. */
   ownAddress: string;
@@ -98,6 +105,9 @@ export interface Store {
   /** The user's own Close ticks: address → close or not. Empty when none (or unreadable). */
   getCloseChoices(): Promise<Record<string, boolean>>;
   putCloseChoices(c: Record<string, boolean>): Promise<void>;
+  /** The automatic close rule; DEFAULT_CLOSE_RULE until changed. Holds no personal data, so it isn't encrypted. */
+  getCloseRule(): Promise<CloseRule>;
+  putCloseRule(r: CloseRule): Promise<void>;
   /** Forgets summaries, Jev answers, and the scan. Keeps label records and overrides so the user's choices are remembered. */
   clearScanData(): Promise<void>;
 }
@@ -392,6 +402,8 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
     putSenderStats: (s) => putSealedKv(SENDER_STATS, s),
     getCloseChoices: async () => (await getSealedKv<Record<string, boolean>>(CLOSE_CHOICES)) ?? {},
     putCloseChoices: (c) => putSealedKv(CLOSE_CHOICES, c),
+    getCloseRule: async () => ({ ...DEFAULT_CLOSE_RULE, ...((await db.get("kv", "closeRule")) as Partial<CloseRule> | undefined) }),
+    putCloseRule: async (r) => void (await db.put("kv", r, "closeRule")),
     clearScanData: () => clearScan(),
   };
 }

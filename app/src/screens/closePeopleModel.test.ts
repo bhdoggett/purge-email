@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SenderStats } from "../storage/db.ts";
+import { DEFAULT_CLOSE_RULE as RULE, type SenderStats } from "../storage/db.ts";
 import { closeCount, closeRows, countStatus, emailsText, PAGE_SIZE } from "./closePeopleModel.ts";
 
 const person = (address: string, name: string, sent: number, years: number[]) => ({ address, name, nameAt: 0, sent, years });
@@ -12,21 +12,24 @@ const stats: SenderStats = {
 
 describe("closeRows", () => {
   it("sorts by emails sent, most first, and marks auto and chosen ticks", () => {
-    expect(closeRows(stats, { "bo@x.com": true }, "")).toEqual([
+    expect(closeRows(stats, { "bo@x.com": true }, "", RULE)).toEqual([
       { address: "ann@x.com", name: "Ann Smith", sent: 214, years: 3, close: true, auto: true },
-      { address: "cy@y.org", name: "", sent: 12, years: 2, close: true, auto: true },
+      { address: "cy@y.org", name: "", sent: 12, years: 2, close: false, auto: false },
       { address: "bo@x.com", name: "Bo Lee", sent: 3, years: 1, close: true, auto: false },
     ]);
   });
+  it("ticks automatically by the rule it is given", () => {
+    expect(closeRows(stats, {}, "", { minSent: 10, minYears: 2 }).find((r) => r.address === "cy@y.org")).toMatchObject({ close: true, auto: true });
+  });
   it("lets an explicit untick win over the automatic list", () => {
-    expect(closeRows(stats, { "ann@x.com": false }, "")[0]).toMatchObject({ close: false, auto: false });
+    expect(closeRows(stats, { "ann@x.com": false }, "", RULE)[0]).toMatchObject({ close: false, auto: false });
   });
   it("searches names and addresses, ignoring case", () => {
-    expect(closeRows(stats, {}, " SMITH ").map((r) => r.address)).toEqual(["ann@x.com"]);
-    expect(closeRows(stats, {}, "y.org").map((r) => r.address)).toEqual(["cy@y.org"]);
+    expect(closeRows(stats, {}, " SMITH ", RULE).map((r) => r.address)).toEqual(["ann@x.com"]);
+    expect(closeRows(stats, {}, "y.org", RULE).map((r) => r.address)).toEqual(["cy@y.org"]);
   });
   it("is empty without counts", () => {
-    expect(closeRows(null, { "a@x.com": true }, "")).toEqual([]);
+    expect(closeRows(null, { "a@x.com": true }, "", RULE)).toEqual([]);
   });
   it("shows 100 at a time", () => {
     expect(PAGE_SIZE).toBe(100);
@@ -35,7 +38,7 @@ describe("closeRows", () => {
 
 describe("closeCount", () => {
   it("counts everyone close, including chosen people not in the counts", () => {
-    expect(closeCount(stats, { "bo@x.com": true, "new@x.com": true, "cy@y.org": false })).toBe(3);
+    expect(closeCount(stats, { "bo@x.com": true, "new@x.com": true, "cy@y.org": false }, RULE)).toBe(3);
   });
 });
 

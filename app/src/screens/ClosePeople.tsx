@@ -3,7 +3,7 @@ import { Button } from "../components/Button.tsx";
 import { ProgressBar } from "../components/ProgressBar.tsx";
 import { RateLimitNote } from "../components/RateLimitNote.tsx";
 import type { Services } from "../services.ts";
-import type { SenderStats } from "../storage/db.ts";
+import { type CloseRule, DEFAULT_CLOSE_RULE, type SenderStats } from "../storage/db.ts";
 import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
 import { isCounting, useCounter } from "../useCounter.ts";
 import { useProgress } from "../useProgress.ts";
@@ -12,6 +12,8 @@ import { closeCount, closeRows, countStatus, emailsText, PAGE_SIZE } from "./clo
 import styles from "./ClosePeople.module.css";
 
 const SCANNING_HINT = "A scan is running. Count after it finishes.";
+
+const wholeNumber = (raw: string, min: number, max: number) => Math.min(max, Math.max(min, Math.round(Number(raw) || min)));
 
 /** Who the user is close to: counted from Sent mail, then ticked or unticked by hand. */
 export function ClosePeople({ services }: { services: Services }) {
@@ -27,6 +29,7 @@ export function ClosePeople({ services }: { services: Services }) {
   // The latest choices, and a count of changes made, so a slow reload never overwrites a newer tick.
   const choicesRef = useRef<Record<string, boolean>>({});
   const changes = useRef(0);
+  const [rule, setRule] = useState<CloseRule>(DEFAULT_CLOSE_RULE);
   const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState(PAGE_SIZE);
@@ -37,9 +40,10 @@ export function ClosePeople({ services }: { services: Services }) {
     if (counting) return;
     let current = true;
     const changesAtStart = changes.current;
-    void Promise.all([store.getSenderStats(), store.getCloseChoices(), currentAccount(services.gmail)]).then(([s, c, a]) => {
+    void Promise.all([store.getSenderStats(), store.getCloseChoices(), currentAccount(services.gmail), store.getCloseRule()]).then(([s, c, a, r]) => {
       if (!current) return;
       setStats(s);
+      setRule(r);
       setAccount(a);
       if (changes.current === changesAtStart) {
         choicesRef.current = c;
@@ -55,8 +59,8 @@ export function ClosePeople({ services }: { services: Services }) {
   const status = countStatus(stats, account);
   // Counts from another account are never shown or used.
   const shownStats = status === "none" ? null : stats;
-  const rows = useMemo(() => closeRows(shownStats, choices, query), [shownStats, choices, query]);
-  const total = useMemo(() => closeCount(shownStats, choices), [shownStats, choices]);
+  const rows = useMemo(() => closeRows(shownStats, choices, query, rule), [shownStats, choices, query, rule]);
+  const total = useMemo(() => closeCount(shownStats, choices, rule), [shownStats, choices, rule]);
 
   const blocked = scanning || applying;
   const hint = scanning ? SCANNING_HINT : applying ? APPLYING_HINT : undefined;
@@ -77,6 +81,17 @@ export function ClosePeople({ services }: { services: Services }) {
       else undone[address] = before;
       choicesRef.current = undone;
       setChoices(undone);
+      setError("Couldn't save your change. Try again.");
+    }
+  }
+
+  async function changeRule(patch: Partial<CloseRule>) {
+    const next = { ...rule, ...patch };
+    setRule(next);
+    setError(null);
+    try {
+      await store.putCloseRule(next);
+    } catch {
       setError("Couldn't save your change. Try again.");
     }
   }
@@ -125,6 +140,33 @@ export function ClosePeople({ services }: { services: Services }) {
           {status === "partial" && (
             <p className={styles.muted}>Counting stopped before the end. Until it finishes, personal mail is kept and Jev isn't asked about it.</p>
           )}
+          <p className={styles.rule}>
+            <label>
+              Auto-tick people I&apos;ve emailed at least{" "}
+              <input
+                type="number"
+                className={styles.number}
+                min={1}
+                max={10000}
+                value={rule.minSent}
+                onChange={(e) => void changeRule({ minSent: wholeNumber(e.target.value, 1, 10000) })}
+              />{" "}
+              times
+            </label>{" "}
+            <label>
+              over{" "}
+              <input
+                type="number"
+                className={styles.number}
+                min={1}
+                max={50}
+                value={rule.minYears}
+                onChange={(e) => void changeRule({ minYears: wholeNumber(e.target.value, 1, 50) })}
+              />{" "}
+              or more different years.
+            </label>{" "}
+            Your own ticks and unticks always win.
+          </p>
           {rows.length === 0 ? (
             <p className={styles.muted}>{query.trim() ? "No one matches." : "No one found in your Sent mail."}</p>
           ) : (

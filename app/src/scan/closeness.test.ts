@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { openStore } from "../storage/db.ts";
 import { testKey } from "../test/key.ts";
-import { CLOSE_MIN_SENT, CLOSE_MIN_YEARS, closeSet, countSent, loadCloseContext, parseAddresses, senderAddress, type SenderStats } from "./closeness.ts";
+import { closeSet, DEFAULT_CLOSE_RULE, countSent, loadCloseContext, parseAddresses, senderAddress, type SenderStats } from "./closeness.ts";
 import { createFakeGmail } from "./fakes.ts";
 
 describe("parseAddresses", () => {
@@ -49,7 +49,7 @@ describe("senderAddress", () => {
 });
 
 describe("loadCloseContext", () => {
-  const person = { address: "ann@x.com", name: "", nameAt: 0, sent: 20, years: [2019, 2020] };
+  const person = { address: "ann@x.com", name: "", nameAt: 0, sent: 30, years: [2018, 2019, 2020] };
   async function withStats(s: Partial<SenderStats> | null, choices: Record<string, boolean> = {}) {
     const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
     if (s) await store.putSenderStats({ ownAddress: "me@gmail.com", counted: [], people: [person], complete: true, ...s });
@@ -68,6 +68,13 @@ describe("loadCloseContext", () => {
     expect(await loadCloseContext(await withStats({ ownAddress: "other@gmail.com" }), "me@gmail.com")).toEqual({ close: new Set(), own: null, known: false });
     expect((await loadCloseContext(await withStats({}), null)).known).toBe(false);
   });
+  it("applies the saved auto-close rule", async () => {
+    const store = await withStats({});
+    await store.putCloseRule({ minSent: 40, minYears: 3 });
+    expect((await loadCloseContext(store, "me@gmail.com")).close).toEqual(new Set());
+    await store.putCloseRule({ minSent: 30, minYears: 3 });
+    expect((await loadCloseContext(store, "me@gmail.com")).close).toEqual(new Set(["ann@x.com"]));
+  });
   it("is unknown with no counts, even with choices", async () => {
     expect((await loadCloseContext(await withStats(null, { "bo@x.com": true }), "me@gmail.com")).known).toBe(false);
   });
@@ -77,11 +84,15 @@ describe("closeSet", () => {
   const stats = (people: SenderStats["people"]): SenderStats => ({ ownAddress: "me@gmail.com", counted: [], people, complete: true });
   const person = (address: string, sent: number, years: number[]) => ({ address, name: "", nameAt: 0, sent, years });
 
-  it("counts someone close after 10 emails over 2 or more years", () => {
-    expect(CLOSE_MIN_SENT).toBe(10);
-    expect(CLOSE_MIN_YEARS).toBe(2);
-    const s = stats([person("a@x.com", 10, [2019, 2020]), person("b@x.com", 9, [2019, 2020]), person("c@x.com", 50, [2020])]);
+  it("counts someone close after 25 emails over 3 or more years by default", () => {
+    expect(DEFAULT_CLOSE_RULE).toEqual({ minSent: 25, minYears: 3 });
+    const s = stats([person("a@x.com", 25, [2018, 2019, 2020]), person("b@x.com", 24, [2018, 2019, 2020]), person("c@x.com", 90, [2019, 2020])]);
     expect([...closeSet(s, {})]).toEqual(["a@x.com"]);
+  });
+  it("uses the rule it is given", () => {
+    const s = stats([person("a@x.com", 10, [2019, 2020]), person("b@x.com", 60, [2016, 2017, 2018, 2019])]);
+    expect([...closeSet(s, {}, { minSent: 10, minYears: 2 })].sort()).toEqual(["a@x.com", "b@x.com"]);
+    expect([...closeSet(s, {}, { minSent: 50, minYears: 4 })]).toEqual(["b@x.com"]);
   });
   it("lets an explicit choice win either way", () => {
     const s = stats([person("a@x.com", 10, [2019, 2020]), person("b@x.com", 1, [2019])]);

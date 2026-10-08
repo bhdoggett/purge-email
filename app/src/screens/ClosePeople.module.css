@@ -104,3 +104,17 @@
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
 }
+
+.rule {
+  font-size: var(--text-sm);
+  color: var(--color-muted);
+}
+.number {
+  width: 5.5em;
+  font: inherit;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+}
