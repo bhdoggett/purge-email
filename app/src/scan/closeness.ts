@@ -136,6 +136,7 @@ function addMessage(people: Map<string, SenderStat>, headers: Record<string, str
     seen.add(address);
     const p = people.get(address) ?? { address, name: "", nameAt: 0, sent: 0, years: [] };
     p.sent++;
+    if (!Number.isNaN(at) && at > (p.lastAt ?? 0)) p.lastAt = at;
     if (year !== null && !p.years.includes(year)) p.years = [...p.years, year].sort((a, b) => a - b);
     if (name && (p.name === "" || (!Number.isNaN(at) && at >= p.nameAt))) {
       p.name = name;

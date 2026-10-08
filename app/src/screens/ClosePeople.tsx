@@ -8,10 +8,15 @@ import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
 import { isCounting, useCounter } from "../useCounter.ts";
 import { useProgress } from "../useProgress.ts";
 import { currentAccount } from "../scan/closeness.ts";
-import { closeCount, closeRows, countStatus, emailsText, PAGE_SIZE } from "./closePeopleModel.ts";
+import { type CloseShow, type CloseSort, closeCount, closeRows, countStatus, emailsText, PAGE_SIZE } from "./closePeopleModel.ts";
 import styles from "./ClosePeople.module.css";
 
 const SCANNING_HINT = "A scan is running. Count after it finishes.";
+
+const SHOW_OPTIONS: { id: CloseShow; label: string }[] = [
+  { id: "close", label: "Close only" },
+  { id: "everyone", label: "Everyone" },
+];
 
 const wholeNumber = (raw: string, min: number, max: number) => Math.min(max, Math.max(min, Math.round(Number(raw) || min)));
 
@@ -30,8 +35,12 @@ export function ClosePeople({ services }: { services: Services }) {
   const choicesRef = useRef<Record<string, boolean>>({});
   const changes = useRef(0);
   const [rule, setRule] = useState<CloseRule>(DEFAULT_CLOSE_RULE);
+  // The choices the list was last built from (see `rows` below).
+  const [viewChoices, setViewChoices] = useState<Record<string, boolean>>({});
   const [loaded, setLoaded] = useState(false);
   const [query, setQuery] = useState("");
+  const [show, setShow] = useState<CloseShow>("close");
+  const [sort, setSort] = useState<CloseSort>("most");
   const [shown, setShown] = useState(PAGE_SIZE);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,6 +57,7 @@ export function ClosePeople({ services }: { services: Services }) {
       if (changes.current === changesAtStart) {
         choicesRef.current = c;
         setChoices(c);
+        setViewChoices(c);
       }
       setLoaded(true);
     });
@@ -59,7 +69,13 @@ export function ClosePeople({ services }: { services: Services }) {
   const status = countStatus(stats, account);
   // Counts from another account are never shown or used.
   const shownStats = status === "none" ? null : stats;
-  const rows = useMemo(() => closeRows(shownStats, choices, query, rule), [shownStats, choices, query, rule]);
+  // Unticking someone in "Close only" would make them vanish under the pointer, so the list is built
+  // from the choices as they were when the view last changed; newer ticks still show in each checkbox.
+  useEffect(() => setViewChoices(choicesRef.current), [show, sort, query, rule, shownStats]);
+  const rows = useMemo(
+    () => closeRows(shownStats, viewChoices, query, rule, { show, sort }).map((r) => ({ ...r, close: choices[r.address] ?? r.close, auto: r.auto && choices[r.address] === undefined })),
+    [shownStats, viewChoices, choices, query, rule, show, sort],
+  );
   const total = useMemo(() => closeCount(shownStats, choices, rule), [shownStats, choices, rule]);
 
   const blocked = scanning || applying;
@@ -133,6 +149,35 @@ export function ClosePeople({ services }: { services: Services }) {
                 setShown(PAGE_SIZE);
               }}
             />
+            <div className={styles.segmented} role="group" aria-label="Show">
+              {SHOW_OPTIONS.map((o) => (
+                <button
+                  key={o.id}
+                  type="button"
+                  className={styles.segment}
+                  aria-pressed={show === o.id}
+                  onClick={() => {
+                    setShow(o.id);
+                    setShown(PAGE_SIZE);
+                  }}
+                >
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            <select
+              className={styles.sort}
+              aria-label="Sort"
+              value={sort}
+              onChange={(e) => {
+                setSort(e.target.value as CloseSort);
+                setShown(PAGE_SIZE);
+              }}
+            >
+              <option value="most">Most emailed</option>
+              <option value="name">Name, A to Z</option>
+              <option value="recent">Most recently emailed</option>
+            </select>
             <Button variant={status === "partial" ? "primary" : "secondary"} disabled={blocked} title={hint} onClick={count}>
               {status === "partial" ? "Continue counting" : "Recount"}
             </Button>
@@ -168,7 +213,7 @@ export function ClosePeople({ services }: { services: Services }) {
             Your own ticks and unticks always win.
           </p>
           {rows.length === 0 ? (
-            <p className={styles.muted}>{query.trim() ? "No one matches." : "No one found in your Sent mail."}</p>
+            <p className={styles.muted}>{query.trim() ? "No one matches." : show === "close" ? "No close people yet. Choose Everyone to tick people." : "No one found in your Sent mail."}</p>
           ) : (
             <ul className={styles.list}>
               {rows.slice(0, shown).map((r) => (
@@ -186,6 +231,12 @@ export function ClosePeople({ services }: { services: Services }) {
                 </li>
               ))}
             </ul>
+          )}
+          {rows.length > 0 && (
+            <p className={styles.muted}>
+              Showing {Math.min(shown, rows.length).toLocaleString()} of {rows.length.toLocaleString()}
+              {show === "close" ? " close people" : " people"}
+            </p>
           )}
           {rows.length > shown && (
             <Button variant="secondary" onClick={() => setShown((n) => n + PAGE_SIZE)}>Show more</Button>

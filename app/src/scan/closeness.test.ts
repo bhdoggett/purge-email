@@ -125,6 +125,13 @@ describe("countSent", () => {
     expect(await store.getSenderStats()).toEqual(stats);
   });
 
+  it("remembers when each person was last emailed", async () => {
+    const { store, gmail } = await setup();
+    const stats = await countSent(gmail, store, "me@gmail.com");
+    expect(stats.people.find((p) => p.address === "ann@x.com")!.lastAt).toBe(Date.UTC(2019, 0, 2, 10));
+    expect(stats.people.find((p) => p.address === "bo@y.org")!.lastAt).toBe(Date.UTC(2018, 0, 1, 10));
+  });
+
   it("keeps the newest non-empty name", async () => {
     const { store, gmail } = await setup();
     gmail.sent.set("s4", { to: "Old Name <ann@x.com>", cc: "", date: "Sun, 01 Jan 2012 10:00:00 +0000" });

@@ -13,9 +13,9 @@ const stats: SenderStats = {
 describe("closeRows", () => {
   it("sorts by emails sent, most first, and marks auto and chosen ticks", () => {
     expect(closeRows(stats, { "bo@x.com": true }, "", RULE)).toEqual([
-      { address: "ann@x.com", name: "Ann Smith", sent: 214, years: 3, close: true, auto: true },
-      { address: "cy@y.org", name: "", sent: 12, years: 2, close: false, auto: false },
-      { address: "bo@x.com", name: "Bo Lee", sent: 3, years: 1, close: true, auto: false },
+      { address: "ann@x.com", name: "Ann Smith", sent: 214, years: 3, close: true, auto: true, lastAt: Date.UTC(2012, 0, 1) },
+      { address: "cy@y.org", name: "", sent: 12, years: 2, close: false, auto: false, lastAt: Date.UTC(2020, 0, 1) },
+      { address: "bo@x.com", name: "Bo Lee", sent: 3, years: 1, close: true, auto: false, lastAt: Date.UTC(2020, 0, 1) },
     ]);
   });
   it("ticks automatically by the rule it is given", () => {
@@ -59,5 +59,36 @@ describe("countStatus", () => {
   it("is partial while counting is unfinished, and done once complete", () => {
     expect(countStatus({ ...stats, complete: false }, "Me@Gmail.com")).toBe("partial");
     expect(countStatus(stats, "me@gmail.com")).toBe("done");
+  });
+});
+
+describe("closeRows show and sort", () => {
+  const people: SenderStats = {
+    ownAddress: "me@gmail.com",
+    counted: [],
+    complete: true,
+    people: [
+      { address: "zed@x.com", name: "Zed", nameAt: 0, sent: 40, years: [2015, 2016, 2017], lastAt: Date.UTC(2017, 5, 1) },
+      { address: "amy@x.com", name: "amy", nameAt: 0, sent: 5, years: [2021], lastAt: Date.UTC(2021, 2, 1) },
+      // Counted before last-emailed dates were kept: falls back to its newest year.
+      { address: "bo@x.com", name: "", nameAt: 0, sent: 30, years: [2018, 2019, 2020] },
+    ],
+  };
+  const ids = (show: "close" | "everyone", sort: "most" | "name" | "recent", choices: Record<string, boolean> = {}) =>
+    closeRows(people, choices, "", RULE, { show, sort }).map((r) => r.address);
+
+  it("shows only close people, or everyone", () => {
+    expect(ids("close", "most")).toEqual(["zed@x.com", "bo@x.com"]);
+    expect(ids("close", "most", { "amy@x.com": true, "bo@x.com": false })).toEqual(["zed@x.com", "amy@x.com"]);
+    expect(ids("everyone", "most")).toEqual(["zed@x.com", "bo@x.com", "amy@x.com"]);
+  });
+  it("sorts by name A to Z, ignoring case, using the address when there is no name", () => {
+    expect(ids("everyone", "name")).toEqual(["amy@x.com", "bo@x.com", "zed@x.com"]);
+  });
+  it("sorts by most recently emailed", () => {
+    expect(ids("everyone", "recent")).toEqual(["amy@x.com", "bo@x.com", "zed@x.com"]);
+  });
+  it("defaults to everyone, most emailed first", () => {
+    expect(closeRows(people, {}, "", RULE).map((r) => r.address)).toEqual(ids("everyone", "most"));
   });
 });

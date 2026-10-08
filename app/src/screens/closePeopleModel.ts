@@ -13,19 +13,40 @@ export interface CloseRow {
   close: boolean;
   /** Ticked by the automatic rule, not by the user. */
   auto: boolean;
+  /** When they were last emailed (ms); for older counts, the start of the newest year; 0 when unknown. */
+  lastAt: number;
 }
 
-/** People from the counts matching `query` (name or address), most emailed first. */
-export function closeRows(stats: SenderStats | null, choices: Record<string, boolean>, query: string, rule: CloseRule): CloseRow[] {
+export type CloseShow = "close" | "everyone";
+export type CloseSort = "most" | "name" | "recent";
+
+const byAddress = (a: CloseRow, b: CloseRow) => (a.address < b.address ? -1 : a.address > b.address ? 1 : 0);
+const SORTS: Record<CloseSort, (a: CloseRow, b: CloseRow) => number> = {
+  most: (a, b) => b.sent - a.sent || byAddress(a, b),
+  name: (a, b) => (a.name || a.address).localeCompare(b.name || b.address, undefined, { sensitivity: "base" }) || byAddress(a, b),
+  recent: (a, b) => b.lastAt - a.lastAt || b.sent - a.sent || byAddress(a, b),
+};
+
+/** People from the counts matching `query` (name or address), filtered by `show` and ordered by `sort`. */
+export function closeRows(
+  stats: SenderStats | null,
+  choices: Record<string, boolean>,
+  query: string,
+  rule: CloseRule,
+  { show, sort }: { show: CloseShow; sort: CloseSort } = { show: "everyone", sort: "most" },
+): CloseRow[] {
   const q = query.trim().toLowerCase();
   return (stats?.people ?? [])
     .filter((p) => q === "" || p.address.includes(q) || p.name.toLowerCase().includes(q))
     .map((p) => {
       const chosen = choices[p.address];
       const auto = chosen === undefined && isAutoClose(p, rule);
-      return { address: p.address, name: p.name, sent: p.sent, years: p.years.length, close: chosen ?? auto, auto };
+      const newestYear = p.years.at(-1);
+      const lastAt = p.lastAt ?? (newestYear === undefined ? 0 : Date.UTC(newestYear, 0, 1));
+      return { address: p.address, name: p.name, sent: p.sent, years: p.years.length, close: chosen ?? auto, auto, lastAt };
     })
-    .sort((a, b) => b.sent - a.sent || (a.address < b.address ? -1 : a.address > b.address ? 1 : 0));
+    .filter((r) => show === "everyone" || r.close)
+    .sort(SORTS[sort]);
 }
 
 export const closeCount = (stats: SenderStats | null, choices: Record<string, boolean>, rule: CloseRule): number => closeSet(stats, choices, rule).size;

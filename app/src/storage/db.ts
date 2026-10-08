@@ -45,6 +45,8 @@ export interface SenderStat {
   sent: number;
   /** Distinct calendar years those emails were sent in, ascending. */
   years: number[];
+  /** Date (ms) of the newest email sent to them; missing in counts made before it was kept, or when no date could be read. */
+  lastAt?: number;
 }
 
 /** Counts from the user's Sent mail. Stored encrypted, with the ids already counted so a recount only reads new mail. */
