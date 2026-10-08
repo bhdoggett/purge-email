@@ -6,6 +6,7 @@ import { RateLimitNote } from "../components/RateLimitNote.tsx";
 import { ProgressBar } from "../components/ProgressBar.tsx";
 import { formatDuration, formatUsd } from "../format.ts";
 import { currentAccount } from "../scan/closeness.ts";
+import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
 import { scanCounts } from "../scan/reconcile.ts";
 import type { ScanRecord } from "../storage/db.ts";
 import type { Services } from "../services.ts";
@@ -30,6 +31,14 @@ export function Scan({ services, go, openWizard }: { services: Services; go: (s:
   const running = services.engine.isBusy();
   const stage = p.stage === "judging" ? `Reading and judging ${p.done.toLocaleString()} of ${p.total.toLocaleString()}` : (STAGE_COPY[p.stage] ?? "");
   const mapped = p.error ? errorToStep(p.error) : null;
+  const blocked = applying || counting;
+  const blockedHint = applying ? APPLYING_HINT : counting ? COUNTING_HINT : undefined;
+
+  async function rescan() {
+    if (running || blocked) return;
+    const settings = await services.store.getSettings();
+    void services.engine.start(settings, { limit: DEV_SCAN_LIMIT });
+  }
 
   // A scan that finishes while this screen is open goes straight to Review. Opening Scan after a finished scan does not.
   const lastStage = useRef(p.stage);
@@ -54,13 +63,26 @@ export function Scan({ services, go, openWizard }: { services: Services; go: (s:
   if (p.stage === "idle") {
     return (
       <section className={styles.scan}>
-        {last?.scan.finished ? (
+        {last?.scan.finished && !last.counts ? (
+          <>
+            <h1 className={styles.heading}>Rescan needed</h1>
+            <p className={styles.eta}>
+              You lowered the age or turned off a protection under "Always keep", so some emails were never scanned. Only a new scan finds them.
+            </p>
+            <p className={styles.eta}>
+              Last scan started {new Date(last.scan.startedAt).toLocaleString()} · {last.scan.candidateIds.length.toLocaleString()} emails checked
+            </p>
+            <div className={styles.actions}>
+              <Button disabled={blocked} title={blockedHint} onClick={() => void rescan()}>Rescan</Button>
+              <Button variant="secondary" onClick={() => go("rules")}>Go to Rules</Button>
+            </div>
+          </>
+        ) : last?.scan.finished ? (
           <>
             <h1 className={styles.heading}>Last scan finished</h1>
             <p className={styles.eta}>
               Started {new Date(last.scan.startedAt).toLocaleString()} · {last.scan.candidateIds.length.toLocaleString()} emails checked
             </p>
-            {!last.counts && <p className={styles.eta}>Your rules changed since this scan. Rescan to see counts.</p>}
             {last.counts && (
               <dl className={styles.counts}>
                 <div><dt>To purge</dt><dd className={styles.purge}>{last.counts.purge.toLocaleString()}</dd></div>
