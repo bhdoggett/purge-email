@@ -160,3 +160,36 @@
   background: var(--color-bg);
   color: var(--color-text);
 }
+
+.toggle {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.chevron {
+  display: inline-block;
+  color: var(--color-muted);
+  transition: transform var(--duration);
+}
+.chevronOpen {
+  transform: rotate(90deg);
+}
+.badge {
+  margin-left: auto;
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--color-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  .chevron {
+    transition: none;
+  }
+}

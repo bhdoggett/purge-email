@@ -13,6 +13,25 @@ import styles from "./ClosePeople.module.css";
 
 const SCANNING_HINT = "A scan is running. Count after it finishes.";
 
+const OPEN_KEY = "closePeopleOpen";
+
+function readOpen(): boolean | null {
+  try {
+    const v = localStorage.getItem(OPEN_KEY);
+    return v === null ? null : v === "true";
+  } catch {
+    return null;
+  }
+}
+
+function writeOpen(open: boolean): void {
+  try {
+    localStorage.setItem(OPEN_KEY, String(open));
+  } catch {
+    // Not remembered; the panel still works.
+  }
+}
+
 const SHOW_OPTIONS: { id: CloseShow; label: string }[] = [
   { id: "close", label: "Close only" },
   { id: "everyone", label: "Everyone" },
@@ -78,6 +97,24 @@ export function ClosePeople({ services }: { services: Services }) {
   );
   const total = useMemo(() => closeCount(shownStats, choices, rule), [shownStats, choices, rule]);
 
+  // Collapsed by default once the count is done; open while it still needs counting. The user's own
+  // choice is remembered in this browser only.
+  const [openChoice, setOpenChoice] = useState<boolean | null>(() => readOpen());
+  const open = openChoice ?? (counting || status !== "done");
+  const toggle = () => {
+    setOpenChoice(!open);
+    writeOpen(!open);
+  };
+  const summary = counting
+    ? `Counting ${state.total ? Math.round(((state.done ?? 0) / state.total) * 100) : 0}%`
+    : !loaded
+      ? ""
+      : status === "none"
+        ? "Not counted yet"
+        : status === "partial"
+          ? "Counting stopped partway"
+          : `${total.toLocaleString()} close ${total === 1 ? "person" : "people"}`;
+
   const blocked = scanning || applying;
   const hint = scanning ? SCANNING_HINT : applying ? APPLYING_HINT : undefined;
 
@@ -116,135 +153,143 @@ export function ClosePeople({ services }: { services: Services }) {
 
   return (
     <section className={styles.panel} aria-labelledby="close-people-heading">
-      <h2 id="close-people-heading" className={styles.heading}>Close people</h2>
-      <p className={styles.muted}>Mail from close people is always kept.</p>
+      <h2 id="close-people-heading" className={styles.heading}>
+        <button type="button" className={styles.toggle} aria-expanded={open} aria-controls="close-people-body" onClick={toggle}>
+          <span className={open ? `${styles.chevron} ${styles.chevronOpen}` : styles.chevron} aria-hidden="true">›</span>
+          Close people
+          {summary && <span className={styles.badge}>{summary}</span>}
+        </button>
+      </h2>
+      <div id="close-people-body" hidden={!open}>
+        <p className={styles.muted}>Mail from close people is always kept.</p>
 
-      {counting ? (
-        <div className={styles.progress}>
-          <ProgressBar value={state.total ? (state.done ?? 0) / state.total : 0} label="Counting progress" />
-          <p className={styles.muted} aria-live="polite">
-            Counted {(state.done ?? 0).toLocaleString()} of {(state.total ?? 0).toLocaleString()} sent emails
-          </p>
-          <RateLimitNote className={styles.muted} />
-        </div>
-      ) : !loaded ? null : status === "none" ? (
-        <div className={styles.start}>
-          <p>Count who you email most, from your Sent mail. This reads Gmail only; Jev isn't used.</p>
-          <Button disabled={blocked} title={hint} onClick={count}>Count my sent mail</Button>
-        </div>
-      ) : (
-        <>
-          <div className={styles.toolbar}>
-            <p className={styles.summary} role="status">
-              {total.toLocaleString()} close {total === 1 ? "person" : "people"}
+        {counting ? (
+          <div className={styles.progress}>
+            <ProgressBar value={state.total ? (state.done ?? 0) / state.total : 0} label="Counting progress" />
+            <p className={styles.muted} aria-live="polite">
+              Counted {(state.done ?? 0).toLocaleString()} of {(state.total ?? 0).toLocaleString()} sent emails
             </p>
-            <input
-              type="search"
-              className={styles.search}
-              placeholder="Search people"
-              aria-label="Search people"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setShown(PAGE_SIZE);
-              }}
-            />
-            <div className={styles.segmented} role="group" aria-label="Show">
-              {SHOW_OPTIONS.map((o) => (
-                <button
-                  key={o.id}
-                  type="button"
-                  className={styles.segment}
-                  aria-pressed={show === o.id}
-                  onClick={() => {
-                    setShow(o.id);
-                    setShown(PAGE_SIZE);
-                  }}
-                >
-                  {o.label}
-                </button>
-              ))}
-            </div>
-            <select
-              className={styles.sort}
-              aria-label="Sort"
-              value={sort}
-              onChange={(e) => {
-                setSort(e.target.value as CloseSort);
-                setShown(PAGE_SIZE);
-              }}
-            >
-              <option value="most">Most emailed</option>
-              <option value="name">Name, A to Z</option>
-              <option value="recent">Most recently emailed</option>
-            </select>
-            <Button variant={status === "partial" ? "primary" : "secondary"} disabled={blocked} title={hint} onClick={count}>
-              {status === "partial" ? "Continue counting" : "Recount"}
-            </Button>
+            <RateLimitNote className={styles.muted} />
           </div>
-          {status === "partial" && (
-            <p className={styles.muted}>Counting stopped before the end. Until it finishes, personal mail is kept and Jev isn't asked about it.</p>
-          )}
-          <p className={styles.rule}>
-            <label>
-              Auto-tick people I&apos;ve emailed at least{" "}
+        ) : !loaded ? null : status === "none" ? (
+          <div className={styles.start}>
+            <p>Count who you email most, from your Sent mail. This reads Gmail only; Jev isn't used.</p>
+            <Button disabled={blocked} title={hint} onClick={count}>Count my sent mail</Button>
+          </div>
+        ) : (
+          <>
+            <div className={styles.toolbar}>
+              <p className={styles.summary} role="status">
+                {total.toLocaleString()} close {total === 1 ? "person" : "people"}
+              </p>
               <input
-                type="number"
-                className={styles.number}
-                min={1}
-                max={10000}
-                value={rule.minSent}
-                onChange={(e) => void changeRule({ minSent: wholeNumber(e.target.value, 1, 10000) })}
-              />{" "}
-              times
-            </label>{" "}
-            <label>
-              over{" "}
-              <input
-                type="number"
-                className={styles.number}
-                min={1}
-                max={50}
-                value={rule.minYears}
-                onChange={(e) => void changeRule({ minYears: wholeNumber(e.target.value, 1, 50) })}
-              />{" "}
-              or more different years.
-            </label>{" "}
-            Your own ticks and unticks always win.
-          </p>
-          {rows.length === 0 ? (
-            <p className={styles.muted}>{query.trim() ? "No one matches." : show === "close" ? "No close people yet. Choose Everyone to tick people." : "No one found in your Sent mail."}</p>
-          ) : (
-            <ul className={styles.list}>
-              {rows.slice(0, shown).map((r) => (
-                <li key={r.address} className={styles.row}>
-                  <div className={styles.who}>
-                    <span className={styles.name}>{r.name || r.address}</span>
-                    {r.name && <span className={styles.address}>{r.address}</span>}
-                    <span className={styles.muted}>{emailsText(r.sent, r.years)}</span>
-                  </div>
-                  <label className={styles.close}>
-                    <input type="checkbox" checked={r.close} onChange={(e) => void choose(r.address, e.target.checked)} />
-                    Close
-                    {r.auto && <span className={styles.auto} title="Ticked from how often you write to them">auto</span>}
-                  </label>
-                </li>
-              ))}
-            </ul>
-          )}
-          {rows.length > 0 && (
-            <p className={styles.muted}>
-              Showing {Math.min(shown, rows.length).toLocaleString()} of {rows.length.toLocaleString()}
-              {show === "close" ? " close people" : " people"}
+                type="search"
+                className={styles.search}
+                placeholder="Search people"
+                aria-label="Search people"
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setShown(PAGE_SIZE);
+                }}
+              />
+              <div className={styles.segmented} role="group" aria-label="Show">
+                {SHOW_OPTIONS.map((o) => (
+                  <button
+                    key={o.id}
+                    type="button"
+                    className={styles.segment}
+                    aria-pressed={show === o.id}
+                    onClick={() => {
+                      setShow(o.id);
+                      setShown(PAGE_SIZE);
+                    }}
+                  >
+                    {o.label}
+                  </button>
+                ))}
+              </div>
+              <select
+                className={styles.sort}
+                aria-label="Sort"
+                value={sort}
+                onChange={(e) => {
+                  setSort(e.target.value as CloseSort);
+                  setShown(PAGE_SIZE);
+                }}
+              >
+                <option value="most">Most emailed</option>
+                <option value="name">Name, A to Z</option>
+                <option value="recent">Most recently emailed</option>
+              </select>
+              <Button variant={status === "partial" ? "primary" : "secondary"} disabled={blocked} title={hint} onClick={count}>
+                {status === "partial" ? "Continue counting" : "Recount"}
+              </Button>
+            </div>
+            {status === "partial" && (
+              <p className={styles.muted}>Counting stopped before the end. Until it finishes, personal mail is kept and Jev isn't asked about it.</p>
+            )}
+            <p className={styles.rule}>
+              <label>
+                Auto-tick people I&apos;ve emailed at least{" "}
+                <input
+                  type="number"
+                  className={styles.number}
+                  min={1}
+                  max={10000}
+                  value={rule.minSent}
+                  onChange={(e) => void changeRule({ minSent: wholeNumber(e.target.value, 1, 10000) })}
+                />{" "}
+                times
+              </label>{" "}
+              <label>
+                over{" "}
+                <input
+                  type="number"
+                  className={styles.number}
+                  min={1}
+                  max={50}
+                  value={rule.minYears}
+                  onChange={(e) => void changeRule({ minYears: wholeNumber(e.target.value, 1, 50) })}
+                />{" "}
+                or more different years.
+              </label>{" "}
+              Your own ticks and unticks always win.
             </p>
-          )}
-          {rows.length > shown && (
-            <Button variant="secondary" onClick={() => setShown((n) => n + PAGE_SIZE)}>Show more</Button>
-          )}
-        </>
-      )}
-      {state.phase === "error" && !counting && <p className={styles.error} role="alert">{state.error}</p>}
-      {error && <p className={styles.error} role="alert">{error}</p>}
+            {rows.length === 0 ? (
+              <p className={styles.muted}>{query.trim() ? "No one matches." : show === "close" ? "No close people yet. Choose Everyone to tick people." : "No one found in your Sent mail."}</p>
+            ) : (
+              <ul className={styles.list}>
+                {rows.slice(0, shown).map((r) => (
+                  <li key={r.address} className={styles.row}>
+                    <div className={styles.who}>
+                      <span className={styles.name}>{r.name || r.address}</span>
+                      {r.name && <span className={styles.address}>{r.address}</span>}
+                      <span className={styles.muted}>{emailsText(r.sent, r.years)}</span>
+                    </div>
+                    <label className={styles.close}>
+                      <input type="checkbox" checked={r.close} onChange={(e) => void choose(r.address, e.target.checked)} />
+                      Close
+                      {r.auto && <span className={styles.auto} title="Ticked from how often you write to them">auto</span>}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {rows.length > 0 && (
+              <p className={styles.muted}>
+                Showing {Math.min(shown, rows.length).toLocaleString()} of {rows.length.toLocaleString()}
+                {show === "close" ? " close people" : " people"}
+              </p>
+            )}
+            {rows.length > shown && (
+              <Button variant="secondary" onClick={() => setShown((n) => n + PAGE_SIZE)}>Show more</Button>
+            )}
+          </>
+        )}
+        {state.phase === "error" && !counting && <p className={styles.error} role="alert">{state.error}</p>}
+        {error && <p className={styles.error} role="alert">{error}</p>}
+      </div>
     </section>
   );
 }
