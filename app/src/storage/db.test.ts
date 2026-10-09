@@ -520,3 +520,38 @@ describe("close people data", () => {
   });
 });
 
+
+describe("revision", () => {
+  it("goes up after every write that can change the Apply plan, and not on reads or wizard progress", async () => {
+    const store = await openStore(testKey, `t-${crypto.randomUUID()}`);
+    const rule = { minSent: 10, minYears: 2 };
+    const stats = { ownAddress: "me@gmail.com", counted: [], people: [], complete: true };
+    const scan = { ageMonths: 8, candidateIds: ["m1"], repliedThreadIds: [], finished: true, startedAt: 1, settingsAtScan: DEFAULT_SETTINGS, msPerEmail: null };
+    const writes: [string, () => Promise<void>][] = [
+      ["putOverrides", () => store.putOverrides(["m1"], null, 1)],
+      ["putOverrideList", () => store.putOverrideList([{ id: "m1", slug: "promotion", at: 2 }])],
+      ["deleteOverrides", () => store.deleteOverrides(["m1"])],
+      ["putSettings", () => store.putSettings({ ...DEFAULT_SETTINGS, ageMonths: 8 })],
+      ["putScan", () => store.putScan(scan)],
+      ["putSummary", () => store.putSummary(summary)],
+      ["putAnswers", () => store.putAnswers("m1", answers)],
+      ["clearScanData", () => store.clearScanData()],
+      ["putCloseChoices", () => store.putCloseChoices({ "a@x.com": true })],
+      ["putCloseRule", () => store.putCloseRule(rule)],
+      ["putSenderStats", () => store.putSenderStats(stats)],
+      ["putLabels", () => store.putLabels([{ id: "m1", label: "purge/promotion", labeledAt: 5, userRemoved: false, userChosen: false }])],
+      ["deleteLabels", () => store.deleteLabels(["m1"])],
+    ];
+    for (const [name, write] of writes) {
+      const before = store.revision();
+      await write();
+      expect(store.revision(), name).toBeGreaterThan(before);
+    }
+    const before = store.revision();
+    await store.getSettings();
+    await store.allLabels();
+    await store.allOverrides();
+    await store.putWizard([1]);
+    expect(store.revision()).toBe(before);
+  });
+});

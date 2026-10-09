@@ -112,6 +112,12 @@ export interface Store {
   putCloseRule(r: CloseRule): Promise<void>;
   /** Forgets summaries, Jev answers, and the scan. Keeps label records and overrides so the user's choices are remembered. */
   clearScanData(): Promise<void>;
+  /**
+   * Goes up once after every write that can change the Apply plan (everything but wizard progress),
+   * so a cached plan made at one revision is known to be current while it is unchanged. Kept in memory:
+   * the cached plan it guards is too.
+   */
+  revision(): number;
 }
 
 type StoredSettings = Partial<Settings> & { years?: number };
@@ -240,6 +246,16 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
     },
   });
 
+  let revision = 0;
+  /** Runs a write and bumps the revision once it settles, failed or not: a failed write may still have changed something. */
+  async function bump<T>(write: Promise<T>): Promise<T> {
+    try {
+      return await write;
+    } finally {
+      revision++;
+    }
+  }
+
   // Decrypted summaries and answers, loaded on first use and kept current by every write.
   let summaryCache: Promise<Map<string, Summary>> | null = null;
   let answerCache: Promise<Map<string, Answers>> | null = null;
@@ -259,16 +275,20 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
    */
   async function clearScan(check?: Sealed) {
     const tx = db.transaction(["summaries", "answers", "kv"], "readwrite");
-    await Promise.all([
-      tx.objectStore("summaries").clear(),
-      tx.objectStore("answers").clear(),
-      tx.objectStore("kv").delete("scan"),
-      // A new key can't read the close people data either, so it goes with the scan data.
-      ...(check ? [tx.objectStore("kv").put(check, KEY_CHECK), tx.objectStore("kv").delete(SENDER_STATS), tx.objectStore("kv").delete(CLOSE_CHOICES)] : []),
-      tx.done,
-    ]);
-    summaryCache = null;
-    answerCache = null;
+    try {
+      await Promise.all([
+        tx.objectStore("summaries").clear(),
+        tx.objectStore("answers").clear(),
+        tx.objectStore("kv").delete("scan"),
+        // A new key can't read the close people data either, so it goes with the scan data.
+        ...(check ? [tx.objectStore("kv").put(check, KEY_CHECK), tx.objectStore("kv").delete(SENDER_STATS), tx.objectStore("kv").delete(CLOSE_CHOICES)] : []),
+        tx.done,
+      ]);
+    } finally {
+      summaryCache = null;
+      answerCache = null;
+      revision++;
+    }
   }
 
   /**
@@ -345,19 +365,25 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
 
   return {
     getSummary: async (id) => unsealSummary(await ready(), await db.get("summaries", id)),
-    async putSummary(s) {
-      const k = await ready();
-      const value = deepFreeze(structuredClone(s));
-      await db.put("summaries", await sealSummary(k, value));
-      await cacheSet(summaryCache, value.id, value);
-    },
+    putSummary: (s) =>
+      bump(
+        (async () => {
+          const k = await ready();
+          const value = deepFreeze(structuredClone(s));
+          await db.put("summaries", await sealSummary(k, value));
+          await cacheSet(summaryCache, value.id, value);
+        })(),
+      ),
     getAnswers: async (id) => unseal<Answers>(await ready(), id, await db.get("answers", id)),
-    async putAnswers(id, a) {
-      const k = await ready();
-      const value = deepFreeze(structuredClone(a));
-      await db.put("answers", await encryptJson(k, value, id), id);
-      await cacheSet(answerCache, id, value);
-    },
+    putAnswers: (id, a) =>
+      bump(
+        (async () => {
+          const k = await ready();
+          const value = deepFreeze(structuredClone(a));
+          await db.put("answers", await encryptJson(k, value, id), id);
+          await cacheSet(answerCache, id, value);
+        })(),
+      ),
     async allSummaries() {
       await ready();
       summaryCache ??= loadSummaries();
@@ -369,43 +395,59 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
       return new Map(await answerCache);
     },
     allLabels: async () => new Map((await db.getAll("labels")).map((l) => [l.id, l])),
-    async putLabels(recs) {
-      const tx = db.transaction("labels", "readwrite");
-      await Promise.all([...recs.map((r) => tx.store.put(r)), tx.done]);
-    },
-    async deleteLabels(ids) {
-      const tx = db.transaction("labels", "readwrite");
-      await Promise.all([...ids.map((id) => tx.store.delete(id)), tx.done]);
-    },
+    putLabels: (recs) =>
+      bump(
+        (async () => {
+          const tx = db.transaction("labels", "readwrite");
+          await Promise.all([...recs.map((r) => tx.store.put(r)), tx.done]);
+        })(),
+      ),
+    deleteLabels: (ids) =>
+      bump(
+        (async () => {
+          const tx = db.transaction("labels", "readwrite");
+          await Promise.all([...ids.map((id) => tx.store.delete(id)), tx.done]);
+        })(),
+      ),
     getSettings: async () => normalizeSettings(((await db.get("kv", "settings")) as StoredSettings | undefined) ?? {}, defaults),
-    putSettings: async (s) => void (await db.put("kv", s, "settings")),
+    putSettings: (s) => bump(db.put("kv", s, "settings")).then(() => undefined),
     getScan: async () => {
       await ready(); // a scan saved under a lost key is cleared with its data
       const raw = (await db.get("kv", "scan")) as StoredScan | undefined;
       return raw ? normalizeScan(raw, defaults) : null;
     },
-    putScan: async (s) => void (await db.put("kv", s, "scan")),
+    putScan: (s) => bump(db.put("kv", s, "scan")).then(() => undefined),
     getWizard: async () => ((await db.get("kv", "wizard")) as number[] | undefined) ?? [],
     putWizard: async (done) => void (await db.put("kv", done, "wizard")),
     allOverrides: async () => new Map((await db.getAll("overrides")).map((o) => [o.id, o])),
-    async putOverrides(ids, slug, at) {
-      const tx = db.transaction("overrides", "readwrite");
-      await Promise.all([...ids.map((id) => tx.store.put({ id, slug, at })), tx.done]);
-    },
-    async putOverrideList(list) {
-      const tx = db.transaction("overrides", "readwrite");
-      await Promise.all([...list.map((o) => tx.store.put(o)), tx.done]);
-    },
-    async deleteOverrides(ids) {
-      const tx = db.transaction("overrides", "readwrite");
-      await Promise.all([...ids.map((id) => tx.store.delete(id)), tx.done]);
-    },
+    putOverrides: (ids, slug, at) =>
+      bump(
+        (async () => {
+          const tx = db.transaction("overrides", "readwrite");
+          await Promise.all([...ids.map((id) => tx.store.put({ id, slug, at })), tx.done]);
+        })(),
+      ),
+    putOverrideList: (list) =>
+      bump(
+        (async () => {
+          const tx = db.transaction("overrides", "readwrite");
+          await Promise.all([...list.map((o) => tx.store.put(o)), tx.done]);
+        })(),
+      ),
+    deleteOverrides: (ids) =>
+      bump(
+        (async () => {
+          const tx = db.transaction("overrides", "readwrite");
+          await Promise.all([...ids.map((id) => tx.store.delete(id)), tx.done]);
+        })(),
+      ),
     getSenderStats: async () => (await getSealedKv<SenderStats>(SENDER_STATS)) ?? null,
-    putSenderStats: (s) => putSealedKv(SENDER_STATS, s),
+    putSenderStats: (s) => bump(putSealedKv(SENDER_STATS, s)),
     getCloseChoices: async () => (await getSealedKv<Record<string, boolean>>(CLOSE_CHOICES)) ?? {},
-    putCloseChoices: (c) => putSealedKv(CLOSE_CHOICES, c),
+    putCloseChoices: (c) => bump(putSealedKv(CLOSE_CHOICES, c)),
     getCloseRule: async () => ({ ...DEFAULT_CLOSE_RULE, ...((await db.get("kv", "closeRule")) as Partial<CloseRule> | undefined) }),
-    putCloseRule: async (r) => void (await db.put("kv", r, "closeRule")),
+    putCloseRule: (r) => bump(db.put("kv", r, "closeRule")).then(() => undefined),
     clearScanData: () => clearScan(),
+    revision: () => revision,
   };
 }
