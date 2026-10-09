@@ -132,11 +132,15 @@ Raising the age or turning on the attachment or starred checkbox after a scan ne
 
 Apply checks Gmail and shows what will change, for example "Add 120 labels · Move 4 · Remove 2", with a count for each label. Changes to your rules since the last apply show up here as pending changes too. Click **Apply labels** to write them. If you renamed the label, the old labels are emptied and you can delete them in Gmail.
 
+Apply keeps its last result while the app is open (after a restart it checks Gmail again). Coming back to Apply shows it again without reading Gmail, unless you saved something since that can change the plan: a Review choice, your rules, a scan or cleared scan data, close people or the close rule. Then it checks Gmail again. "Checked 3:05" near the top says when Apply last read Gmail, with a **Check again** button (off while a scan, Apply or counting runs). Changes you make directly in Gmail aren't noticed until you click **Check again**.
+
+If you click **Apply labels** within 5 minutes of that check and nothing was saved since, the labels you were shown are written straight away. Otherwise Apply checks Gmail first, and if the numbers changed it shows the new ones instead of writing ("Gmail changed since this screen opened. Check the new numbers, then apply.").
+
 A choice you make in Review wins over a change you made to that email in Gmail before then. A change you make in Gmail after Apply has labeled the email wins over your earlier Review choice.
 
 Gmail's label lists can lag for a few minutes after the app changes a label. For mail labeled in the last 10 minutes, the app changes nothing unless Gmail confirms the label it recorded, so it never undoes a change you just made. If Apply says "Some labels are still settling in Gmail. Try Apply again in a few minutes.", wait and try again.
 
-After applying, Apply lists each label with its count and an **Open in Gmail** button. The `maybe` label carries a note to look through it before deleting. Apply has no delete or trash buttons: the app only labels.
+After applying, Apply lists each label with its count and an **Open in Gmail** button. The counts come from the plan it just wrote, not from reading Gmail again, so they include starred emails labeled before you starred them. The `maybe` label carries a note to look through it before deleting. Apply has no delete or trash buttons: the app only labels.
 
 #### Deleting in Gmail safely
 
