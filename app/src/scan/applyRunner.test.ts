@@ -233,6 +233,24 @@ describe("ApplyRunner cached result", () => {
     expect(runner.getState().preview?.account).toBe("other@gmail.com");
   });
 
+  it("an unknown account never reuses or fast-applies a cached plan", async () => {
+    for (const failAt of ["plan", "click"] as const) {
+      for (const path of ["visit", "apply"] as const) {
+        const { runner, gmail } = await arrangeAt();
+        const profile = vi.spyOn(gmail, "getProfile");
+        if (failAt === "plan") profile.mockRejectedValue(new Error("offline"));
+        await runner.check(DEFAULT_SETTINGS);
+        expect(runner.getState().preview?.account, `${failAt} ${path}`).toBe(failAt === "plan" ? null : "me@gmail.com");
+        profile.mockRejectedValue(new Error("offline"));
+        const r = reads(gmail);
+        if (path === "visit") await runner.visit(DEFAULT_SETTINGS);
+        else await runner.apply(DEFAULT_SETTINGS, runner.getState().preview!);
+        // Plans again from Gmail instead of trusting the cached plan.
+        expect(r.count(), `${failAt} ${path}`).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it("reset() drops the cached result, so the next visit checks Gmail", async () => {
     const { runner, gmail } = await arrangeAt();
     await runner.visit(DEFAULT_SETTINGS);

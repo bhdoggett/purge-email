@@ -105,7 +105,8 @@ export class ApplyRunner {
     if (s.phase === "done" && s.preview && settled && s.revision !== undefined && s.revision === this.deps.store.revision()) {
       const account = await currentAccount(this.deps.gmail);
       if (this.state !== s) return this.state; // something else ran meanwhile
-      if (account === s.preview.account) {
+      // An unknown account (either read failed) never counts as the same one.
+      if (account !== null && account === s.preview.account) {
         // An old refusal (a scan was running) no longer applies.
         if (s.error !== undefined) this.set({ ...s, error: undefined });
         return this.state;
@@ -182,6 +183,8 @@ export class ApplyRunner {
         isPending(shown) &&
         now - shown.checkedAt < FRESH_MS &&
         shown.revision === this.deps.store.revision() &&
+        shown.account !== null &&
+        // An unknown account (the read failed) never counts as the same one.
         (await currentAccount(this.deps.gmail)) === shown.account &&
         // Again: something may have been saved while the account was read.
         shown.revision === this.deps.store.revision()
