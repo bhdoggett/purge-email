@@ -26,7 +26,7 @@ export function buildRows(totals: Map<string, number>, prefix: string): ApplyRow
 
 export const totalOf = (rows: ApplyRow[]): number => rows.reduce((n, r) => n + r.count, 0);
 
-export const SETTLING_NOTE = "Some labels are still settling in Gmail. Try Apply again in a few minutes.";
+export const SETTLING_NOTE = "Some labels are still settling in Gmail. Click Check again in a few minutes.";
 
 /** Gmail's #label links use `+` for spaces and `%2F` for the nesting `/`. */
 export function gmailLabelUrl(name: string): string {
@@ -53,8 +53,10 @@ export function appliedMessage(p: PreviewCounts, oldPrefixes: string[]): string 
   return oldPrefixes.length === 0 ? base : `${base} The old labels under "${oldPrefixes.join('", "')}" are now empty. You can delete them in Gmail.`;
 }
 
-/** "Checked 3:05": when Apply last read Gmail, in local time on a 12-hour clock. */
-export function checkedText(at: number): string {
+/** "Checked 3:05 PM" (or "Checked Oct 7, 3:05 PM" on another day): when Apply last read Gmail, in local time. */
+export function checkedText(at: number, now: number = Date.now()): string {
   const d = new Date(at);
-  return `Checked ${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")}`;
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  if (d.toDateString() === new Date(now).toDateString()) return `Checked ${time}`;
+  return `Checked ${d.toLocaleDateString([], { month: "short", day: "numeric" })}, ${time}`;
 }

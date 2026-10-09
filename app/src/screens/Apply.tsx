@@ -193,7 +193,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         )}
         {preview.plan.deferred > 0 && <p className={styles.muted}>{SETTLING_NOTE}</p>}
         <div className={styles.actions}>
-          <Button disabled={scanning || counting} title={counting ? COUNTING_HINT : undefined} onClick={apply}>Apply labels</Button>
+          <Button disabled={scanning || counting} title={scanning ? SCANNING_HINT : counting ? COUNTING_HINT : undefined} onClick={apply}>Apply labels</Button>
         </div>
         {message && <p role="status">{message}</p>}
         {error && <p className={styles.error} role="alert">{error}</p>}

@@ -38,14 +38,14 @@ export function Settings({ services, email, onChanged, onBack }: { services: Ser
           <h2 className={styles.subheading}>Gmail</h2>
           <p className={styles.muted}>{email ? `Signed in as ${email}` : "Not signed in"}</p>
         </div>
-        <Button variant="secondary" disabled={!email || busy} title={hint} onClick={() => act(async () => { await signOut(); await forgetSteps(services.store, SIGN_IN_STEPS); }, "Signed out of Gmail.")}>Sign out</Button>
+        <Button variant="secondary" disabled={!email || busy} title={hint} onClick={() => act(async () => { await signOut(); await forgetSteps(services.store, SIGN_IN_STEPS); services.applier.reset(); }, "Signed out of Gmail.")}>Sign out</Button>
       </div>
       <div className={styles.row}>
         <div>
           <h2 className={styles.subheading}>Saved keys</h2>
           <p className={styles.muted}>Removes the Jev key and Google client from the Keychain and signs you out.</p>
         </div>
-        <Button variant="danger" disabled={busy} title={hint} onClick={() => act(() => removeKeys(services.store, clearSecrets), "Keys removed.")}>Remove keys</Button>
+        <Button variant="danger" disabled={busy} title={hint} onClick={() => act(async () => { await removeKeys(services.store, clearSecrets); services.applier.reset(); }, "Keys removed.")}>Remove keys</Button>
       </div>
       <div className={styles.row}>
         <div>

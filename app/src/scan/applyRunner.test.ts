@@ -5,7 +5,7 @@ import { testKey } from "../test/key.ts";
 import { ApplyRunner } from "./applyRunner.ts";
 import { ScanEngine } from "./engine.ts";
 import { createFakeGmail, fakeAnswers, idsWithLabel, makeSummary } from "./fakes.ts";
-import { isPending, previewReconcile } from "./reconcile.ts";
+import { applyPreview, isPending, previewReconcile, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
 
 const NOW = new Date(2026, 9, 7, 12).getTime();
 
@@ -179,10 +179,15 @@ describe("ApplyRunner", () => {
   });
 });
 
-/** Spies on every Gmail read the plan makes. */
+/** Spies on the label reads a plan makes; `profile` counts account lookups apart. */
 function reads(gmail: ReturnType<typeof createFakeGmail>) {
-  const spies = [vi.spyOn(gmail, "listIds"), vi.spyOn(gmail, "findLabelId"), vi.spyOn(gmail, "getProfile")];
-  return { count: () => spies.reduce((n, s) => n + s.mock.calls.length, 0), clear: () => spies.forEach((s) => s.mockClear()) };
+  const spies = [vi.spyOn(gmail, "listIds"), vi.spyOn(gmail, "findLabelId")];
+  const profile = vi.spyOn(gmail, "getProfile");
+  return {
+    count: () => spies.reduce((n, s) => n + s.mock.calls.length, 0),
+    profile: () => profile.mock.calls.length,
+    clear: () => [...spies, profile].forEach((s) => s.mockClear()),
+  };
 }
 
 describe("ApplyRunner cached result", () => {
@@ -207,7 +212,61 @@ describe("ApplyRunner cached result", () => {
     const r = reads(gmail);
     await runner.visit(DEFAULT_SETTINGS);
     expect(r.count()).toBe(0);
+    // Only the account is looked up, to catch a switch to another Gmail account.
+    expect(r.profile()).toBe(1);
     expect(runner.getState()).toBe(first);
+  });
+
+  it("check() records the account it read", async () => {
+    const { runner } = await arrangeAt();
+    await runner.check(DEFAULT_SETTINGS);
+    expect(runner.getState().preview?.account).toBe("me@gmail.com");
+  });
+
+  it("visit() checks again when the signed-in account changed", async () => {
+    const { runner, gmail } = await arrangeAt();
+    await runner.visit(DEFAULT_SETTINGS);
+    vi.spyOn(gmail, "getProfile").mockResolvedValue({ emailAddress: "other@gmail.com" });
+    const r = reads(gmail);
+    await runner.visit(DEFAULT_SETTINGS);
+    expect(r.count()).toBeGreaterThan(0);
+    expect(runner.getState().preview?.account).toBe("other@gmail.com");
+  });
+
+  it("reset() drops the cached result, so the next visit checks Gmail", async () => {
+    const { runner, gmail } = await arrangeAt();
+    await runner.visit(DEFAULT_SETTINGS);
+    runner.reset();
+    expect(runner.getState().phase).toBe("idle");
+    const r = reads(gmail);
+    await runner.visit(DEFAULT_SETTINGS);
+    expect(r.count()).toBeGreaterThan(0);
+  });
+
+  it("visit() checks a settling result again once the grace window has passed", async () => {
+    const { runner, gmail, store, setNow } = await arrangeAt();
+    // Labeled just now as newsletter, which Gmail doesn't show yet: deferred.
+    await store.putLabels([{ id: "a", label: "purge/newsletter", labeledAt: NOW - 1000, userRemoved: false, userChosen: false }]);
+    await runner.visit(DEFAULT_SETTINGS);
+    expect(runner.getState().preview?.plan.deferred).toBe(1);
+    const r = reads(gmail);
+    setNow(NOW + USER_CHANGE_GRACE_MS - 1);
+    await runner.visit(DEFAULT_SETTINGS);
+    expect(r.count()).toBe(0);
+    setNow(NOW + USER_CHANGE_GRACE_MS);
+    await runner.visit(DEFAULT_SETTINGS);
+    expect(r.count()).toBeGreaterThan(0);
+  });
+
+  it("check() keeps the applied message but not a refusal", async () => {
+    const { runner, store } = await arrangeAt();
+    await runner.check(DEFAULT_SETTINGS);
+    const shown = runner.getState().preview!;
+    await store.putOverrides(["b"], null, NOW + 1);
+    await runner.apply(DEFAULT_SETTINGS, shown);
+    expect(runner.getState().message).toMatch(/^Gmail changed/);
+    await runner.check(DEFAULT_SETTINGS);
+    expect(runner.getState().message).toBeUndefined();
   });
 
   it("visit() keeps a nothing-pending result whose store-only changes were saved", async () => {
@@ -262,6 +321,7 @@ describe("ApplyRunner cached result", () => {
     const r = reads(gmail);
     await runner.apply(DEFAULT_SETTINGS, shown);
     expect(r.count()).toBe(0);
+    expect(r.profile()).toBe(1);
     expect(idsWithLabel(gmail, "purge/promotion")).toEqual(["a", "b"]);
     const s = runner.getState();
     expect(s).toMatchObject({ phase: "done", message: "Added 2, moved 0, removed 0." });
@@ -269,6 +329,16 @@ describe("ApplyRunner cached result", () => {
     expect(isPending(s.preview!)).toBe(false);
     // The records carry the moment of writing, not of the check.
     expect((await store.allLabels()).get("a")?.labeledAt).toBe(NOW + 4 * 60_000);
+  });
+
+  it("apply() within 5 minutes plans again when the signed-in account changed", async () => {
+    const { runner, gmail } = await arrangeAt();
+    await runner.check(DEFAULT_SETTINGS);
+    const shown = runner.getState().preview!;
+    vi.spyOn(gmail, "getProfile").mockResolvedValue({ emailAddress: "other@gmail.com" });
+    const r = reads(gmail);
+    await runner.apply(DEFAULT_SETTINGS, shown);
+    expect(r.count()).toBeGreaterThan(0);
   });
 
   it("apply() records its own writes, so the next visit keeps the done result", async () => {
@@ -340,6 +410,21 @@ describe("ApplyRunner cached result", () => {
     expect(wrote).toBe(true);
     expect(after).toEqual([]);
     expect(runner.getState().preview?.totals).toEqual(new Map([["purge/promotion", 2]]));
+  });
+});
+
+describe("applyPreview and the store revision", () => {
+  it("returns the revision after its own writes, or null when another write was running", async () => {
+    const { store, gmail } = await arrange();
+    const clean = await previewReconcile({ gmail, store, now: () => NOW }, DEFAULT_SETTINGS);
+    expect(await applyPreview({ gmail, store }, clean)).toBe(store.revision());
+
+    const { store: store2, gmail: gmail2 } = await arrange();
+    // Starts before the plan reads the store and ends after: the plan may not have seen it.
+    const inFlight = store2.putOverrides(["a"], null, NOW + 1);
+    const preview = await previewReconcile({ gmail: gmail2, store: store2, now: () => NOW }, DEFAULT_SETTINGS);
+    await inFlight;
+    expect(await applyPreview({ gmail: gmail2, store: store2 }, preview)).toBeNull();
   });
 });
 

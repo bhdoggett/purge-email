@@ -153,7 +153,7 @@ export function createGmail(opts: GmailOptions): Gmail {
       const out: { id: string; threadId: string }[] = [];
       let pageToken: string | undefined;
       do {
-        const params = new URLSearchParams({ q, maxResults: "500" });
+        const params = new URLSearchParams({ q, maxResults: String(Math.min(limit, 500)) });
         for (const id of listOpts?.labelIds ?? []) params.append("labelIds", id);
         if (listOpts?.includeSpamTrash) params.set("includeSpamTrash", "true");
         if (pageToken) params.set("pageToken", pageToken);

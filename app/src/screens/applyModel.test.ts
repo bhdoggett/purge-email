@@ -18,7 +18,7 @@ describe("applyModel", () => {
   });
 
   it("words the settling note for Apply", () => {
-    expect(SETTLING_NOTE).toBe("Some labels are still settling in Gmail. Try Apply again in a few minutes.");
+    expect(SETTLING_NOTE).toBe("Some labels are still settling in Gmail. Click Check again in a few minutes.");
   });
 
   it("builds the Gmail link with + for spaces and %2F for the nesting slash", () => {
@@ -39,9 +39,13 @@ describe("applyModel", () => {
     );
   });
 
-  it("says when Gmail was last checked, as local h:mm", () => {
-    expect(checkedText(new Date(2026, 9, 7, 15, 5).getTime())).toBe("Checked 3:05");
-    expect(checkedText(new Date(2026, 9, 7, 0, 30).getTime())).toBe("Checked 12:30");
-    expect(checkedText(new Date(2026, 9, 7, 11, 59).getTime())).toBe("Checked 11:59");
+  it("says when Gmail was last checked in local time, with the date when it wasn't today", () => {
+    const at = new Date(2026, 9, 7, 15, 5);
+    const time = at.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    expect(checkedText(at.getTime(), new Date(2026, 9, 7, 23, 0).getTime())).toBe(`Checked ${time}`);
+    const date = at.toLocaleDateString([], { month: "short", day: "numeric" });
+    expect(checkedText(at.getTime(), new Date(2026, 9, 8, 9, 0).getTime())).toBe(`Checked ${date}, ${time}`);
+    // Same day of the month, another month: still not today.
+    expect(checkedText(at.getTime(), new Date(2026, 10, 7, 15, 6).getTime())).toBe(`Checked ${date}, ${time}`);
   });
 });

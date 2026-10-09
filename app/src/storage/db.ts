@@ -113,7 +113,7 @@ export interface Store {
   /** Forgets summaries, Jev answers, and the scan. Keeps label records and overrides so the user's choices are remembered. */
   clearScanData(): Promise<void>;
   /**
-   * Goes up once after every write that can change the Apply plan (everything but wizard progress),
+   * Goes up as every write that can change the Apply plan (everything but wizard progress) starts and as it ends,
    * so a cached plan made at one revision is known to be current while it is unchanged. Kept in memory:
    * the cached plan it guards is too.
    */
@@ -247,8 +247,13 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
   });
 
   let revision = 0;
-  /** Runs a write and bumps the revision once it settles, failed or not: a failed write may still have changed something. */
+  /**
+   * Bumps the revision as a write starts (callers pass the write's promise straight away) and again once it
+   * settles, failed or not: a plan read while it runs, or a failed write that still changed something, never
+   * matches the revision after it.
+   */
   async function bump<T>(write: Promise<T>): Promise<T> {
+    revision++;
     try {
       return await write;
     } finally {
@@ -274,6 +279,7 @@ export async function openStore(key: KeySource, name = "purge-email", defaults: 
    * close people data, and records the key the data will be written with from now on.
    */
   async function clearScan(check?: Sealed) {
+    revision++;
     const tx = db.transaction(["summaries", "answers", "kv"], "readwrite");
     try {
       await Promise.all([

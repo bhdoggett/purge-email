@@ -544,8 +544,12 @@ describe("revision", () => {
     ];
     for (const [name, write] of writes) {
       const before = store.revision();
-      await write();
-      expect(store.revision(), name).toBeGreaterThan(before);
+      const pending = write();
+      // Up as soon as the write starts, and again once it ends.
+      const started = store.revision();
+      expect(started, name).toBeGreaterThan(before);
+      await pending;
+      expect(store.revision(), name).toBeGreaterThan(started);
     }
     const before = store.revision();
     await store.getSettings();

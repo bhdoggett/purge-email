@@ -917,15 +917,65 @@ describe("readGmailState reads less", () => {
     expect(state.anywhere).toEqual(new Map([["a", "old/newsletter"]]));
   });
 
-  it("lists a label once when none of its mail is in Trash or Spam", async () => {
+  /** listIds calls per label id. */
+  const callsFor = (spy: { mock: { calls: unknown[][] } }, label: string) => spy.mock.calls.filter(([, , opts]) => (opts as { labelIds: string[] }).labelIds[0] === label);
+  /** `n` messages carrying `label`, ids `${prefix}0`… */
+  function fill(gmail: ReturnType<typeof createFakeGmail>, label: string, n: number, prefix: string) {
+    for (let i = 0; i < n; i++) gmail.labelsOf.set(`${prefix}${i}`, new Set([label]));
+  }
+
+  it("lists a one-page label twice, with no Trash or Spam probes", async () => {
     const gmail = createFakeGmail([]);
-    gmail.labelsOf.set("a", new Set(["purge/promotion"]));
-    gmail.labelsOf.set("b", new Set(["purge/promotion"]));
+    fill(gmail, "purge/promotion", 3, "p");
+    gmail.trashed.add("p1");
+    const expected = await slowState(gmail, appLabelNames(settings.labelPrefix), new Map());
     const listIds = vi.spyOn(gmail, "listIds");
     const state = await readGmailState(gmail, settings, new Map());
+    expect(callsFor(listIds, "purge/promotion")).toHaveLength(2);
+    expect(state.anywhere).toEqual(expected.anywhere);
+    expect(state.live).toEqual(expected.live);
+    expect(state.live).toEqual(new Set(["p0", "p2"]));
+  });
+
+  it("probes a multi-page label for Trash and Spam and skips its second listing when there is none", async () => {
+    const gmail = createFakeGmail([]);
+    fill(gmail, "purge/promotion", 600, "p");
+    const expected = await slowState(gmail, appLabelNames(settings.labelPrefix), new Map());
+    const listIds = vi.spyOn(gmail, "listIds");
+    const state = await readGmailState(gmail, settings, new Map());
+    // The full listing, then a one-result probe each for Trash and Spam.
+    expect(callsFor(listIds, "purge/promotion").map(([, limit]) => limit)).toEqual([Infinity, 1, 1]);
     expect(fullLiveListings(listIds)).toEqual([]);
-    expect(state.live).toEqual(new Set(["a", "b"]));
-    expect(state.anywhere).toEqual(new Map([["a", "purge/promotion"], ["b", "purge/promotion"]]));
+    expect(state.anywhere).toEqual(expected.anywhere);
+    expect(state.live).toEqual(expected.live);
+    expect(state.live.size).toBe(600);
+  });
+
+  it("lists a multi-page label again when its mail is in both Trash and Spam", async () => {
+    const gmail = createFakeGmail([]);
+    fill(gmail, "purge/promotion", 600, "p");
+    gmail.trashed.add("p5");
+    gmail.spam.add("p7");
+    const expected = await slowState(gmail, appLabelNames(settings.labelPrefix), new Map());
+    const listIds = vi.spyOn(gmail, "listIds");
+    const state = await readGmailState(gmail, settings, new Map());
+    expect(fullLiveListings(listIds)).toHaveLength(1);
+    expect(state.anywhere).toEqual(expected.anywhere);
+    expect(state.live).toEqual(expected.live);
+    expect(state.live.has("p5") || state.live.has("p7")).toBe(false);
+    expect(state.live.size).toBe(598);
+  });
+
+  it("matches today's listings for a one-page label with mail in both Trash and Spam", async () => {
+    const gmail = createFakeGmail([]);
+    fill(gmail, "purge/scam", 4, "s");
+    gmail.trashed.add("s0");
+    gmail.spam.add("s1");
+    const expected = await slowState(gmail, appLabelNames(settings.labelPrefix), new Map());
+    const state = await readGmailState(gmail, settings, new Map());
+    expect(state.anywhere).toEqual(expected.anywhere);
+    expect(state.live).toEqual(expected.live);
+    expect(state.live).toEqual(new Set(["s2", "s3"]));
   });
 
   it("matches today's two listings when labeled mail sits in Trash and Spam", async () => {
@@ -946,7 +996,8 @@ describe("readGmailState reads less", () => {
     expect(state.anywhere).toEqual(expected.anywhere);
     expect(state.live).toEqual(expected.live);
     expect(state.live).toEqual(new Set(["a", "d", "f"]));
-    // Only labels with mail in Trash or Spam are listed a second time.
-    expect(fullLiveListings(listIds).map(([, , opts]) => (opts as { labelIds: string[] }).labelIds[0]).sort()).toEqual(["old/maybe", "purge/newsletter", "purge/promotion"]);
+    // One-page labels with mail are listed a second time, without probes.
+    expect(fullLiveListings(listIds).map(([, , opts]) => (opts as { labelIds: string[] }).labelIds[0]).sort()).toEqual(["old/maybe", "purge/newsletter", "purge/promotion", "purge/scam"]);
+    expect(listIds.mock.calls.some(([, limit]) => limit === 1)).toBe(false);
   });
 });

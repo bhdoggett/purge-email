@@ -169,6 +169,9 @@ async function idsOf(gmail: Gmail, labelId: string, includeSpamTrash: boolean): 
   return (await gmail.listIds("", Infinity, { labelIds: [labelId], includeSpamTrash })).map((m) => m.id);
 }
 
+/** Gmail's largest list page. */
+const PAGE = 500;
+
 /** True when any message with label `labelId` is in Trash or Spam: two one-result lists, read by label id. */
 async function anyInSpamTrash(gmail: Gmail, labelId: string): Promise<boolean> {
   for (const where of ["TRASH", "SPAM"]) {
@@ -215,8 +218,9 @@ export async function readGmailState(
     const anywhere = await idsOf(gmail, labelId, true);
     for (const id of anywhere) push(labelsOn, id, name);
     if (anywhere.length === 0) continue;
-    // With none of the label's mail in Trash or Spam, the full list is the live list: skip listing it again.
-    const liveIds = (await anyInSpamTrash(gmail, labelId)) ? await idsOf(gmail, labelId, false) : anywhere;
+    // A label that fit in one page is cheapest to list again. A longer one is probed first: with none of its
+    // mail in Trash or Spam, the full list is the live list.
+    const liveIds = anywhere.length < PAGE || (await anyInSpamTrash(gmail, labelId)) ? await idsOf(gmail, labelId, false) : anywhere;
     for (const id of liveIds) live.add(id);
   }
   // A message with several app labels (e.g. an interrupted move) counts as carrying its recorded one.
@@ -242,6 +246,8 @@ export interface Preview {
   checkedAt: number;
   /** The store's revision when the plan started reading it. */
   revision: number;
+  /** The signed-in Gmail account the plan was read from; null when it couldn't be read. */
+  account: string | null;
 }
 
 export const isPending = (p: Pick<Preview, "added" | "removed" | "moved">): boolean => p.added + p.removed + p.moved > 0;
@@ -268,6 +274,7 @@ export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?:
   // Without a finished scan there are no candidates, so a plan would strip every app label.
   if (!scan?.finished || !scan.settingsAtScan) throw new AppError({ kind: "Invalid", detail: "Scan your mail first." });
   const records = await store.allLabels();
+  const account = await currentAccount(gmail);
   const state = await readGmailState(gmail, settings, records, opts?.onStep);
 
   const plan = planReconcile({
@@ -280,7 +287,7 @@ export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?:
     anywhere: state.anywhere,
     live: state.live,
     overrides: await store.allOverrides(),
-    close: await loadCloseContext(store, await currentAccount(gmail)),
+    close: await loadCloseContext(store, account),
   });
 
   const added = new Set([...plan.add.values()].flat());
@@ -304,6 +311,7 @@ export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?:
     gmail: state,
     checkedAt: now,
     revision,
+    account,
   };
 }
 
@@ -362,9 +370,9 @@ export async function applyPreview(
   await store.putLabels(plan.put);
   await store.deleteLabels(plan.del);
   // settingsAtScan records which rules the scan's candidate list covers, so only a finished scan sets it.
-  // Each of the two writes above goes up by one; any other step means someone else wrote too.
+  // Each of the two writes above goes up twice (as it starts and as it ends); any other step means someone else wrote too.
   const after = store.revision();
-  return before === preview.revision && after === before + 2 ? after : null;
+  return before === preview.revision && after === before + 4 ? after : null;
 }
 
 /** Brings the app's labels in Gmail in line with `settings` over the current scan's candidates. */

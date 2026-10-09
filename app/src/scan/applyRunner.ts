@@ -2,7 +2,8 @@ import type { Settings } from "@core/decide.ts";
 import type { Gmail } from "../gmail/client.ts";
 import type { Store } from "../storage/db.ts";
 import { appliedMessage } from "../screens/applyModel.ts";
-import { applyPreview, isPending, type Preview, previewReconcile, type ReadStep } from "./reconcile.ts";
+import { currentAccount } from "./closeness.ts";
+import { applyPreview, isPending, type Preview, previewReconcile, type ReadStep, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
 
 /** A shown plan younger than this, with the store unchanged since, is written without reading Gmail again. */
 export const FRESH_MS = 5 * 60_000;
@@ -53,6 +54,8 @@ export class ApplyRunner {
   private state: ApplyState = { phase: "idle" };
   private listeners = new Set<() => void>();
   private running = false;
+  /** What the last Apply wrote, shown until the next one. */
+  private lastApplied: string | undefined;
 
   constructor(private readonly deps: ApplyRunnerDeps) {}
 
@@ -82,24 +85,40 @@ export class ApplyRunner {
     if (this.running || this.deps.isScanning() || this.deps.isCounting?.()) return this.state;
     this.running = true;
     try {
-      // The last applied message stays until the next apply.
-      await this.checkInner(settings, this.state.phase === "done" ? this.state.message : undefined);
+      // The last applied message stays until the next apply; a refusal does not.
+      await this.checkInner(settings, this.lastApplied);
     } finally {
       this.running = false;
     }
     return this.state;
   }
 
-  /** Keeps the last result while nothing that changes the plan was saved since; otherwise checks Gmail. */
+  /**
+   * Keeps the last result while nothing that changes the plan was saved since, the same account is signed
+   * in (one profile read), and no settling labels have had their grace window pass; otherwise checks Gmail.
+   */
   async visit(settings: Settings): Promise<ApplyState> {
     if (this.running) return this.state;
     const s = this.state;
-    if (s.phase === "done" && s.revision !== undefined && s.revision === this.deps.store.revision()) {
-      // An old refusal (a scan was running) no longer applies.
-      if (s.error !== undefined) this.set({ ...s, error: undefined });
-      return this.state;
+    const now = (this.deps.now ?? Date.now)();
+    const settled = !s.preview || s.preview.plan.deferred === 0 || now - s.preview.checkedAt < USER_CHANGE_GRACE_MS;
+    if (s.phase === "done" && s.preview && settled && s.revision !== undefined && s.revision === this.deps.store.revision()) {
+      const account = await currentAccount(this.deps.gmail);
+      if (this.state !== s) return this.state; // something else ran meanwhile
+      if (account === s.preview.account) {
+        // An old refusal (a scan was running) no longer applies.
+        if (s.error !== undefined) this.set({ ...s, error: undefined });
+        return this.state;
+      }
     }
     return this.check(settings);
+  }
+
+  /** Forgets the last result (sign-out, removed keys), so the next visit checks Gmail. Leaves a running job alone. */
+  reset(): void {
+    if (this.running) return;
+    this.lastApplied = undefined;
+    this.set({ phase: "idle" });
   }
 
   private async checkInner(settings: Settings, message: string | undefined): Promise<void> {
@@ -137,7 +156,8 @@ export class ApplyRunner {
       this.set({ phase: "error", error: `Could not apply the labels. ${errorText(e)}` });
       return;
     }
-    this.set({ phase: "done", preview: applied(preview), revision: revision ?? undefined, message: appliedMessage(preview, preview.oldPrefixes) });
+    this.lastApplied = appliedMessage(preview, preview.oldPrefixes);
+    this.set({ phase: "done", preview: applied(preview), revision: revision ?? undefined, message: this.lastApplied });
   }
 
   /**
@@ -158,7 +178,14 @@ export class ApplyRunner {
     this.running = true;
     try {
       const now = (this.deps.now ?? Date.now)();
-      if (isPending(shown) && now - shown.checkedAt < FRESH_MS && shown.revision === this.deps.store.revision()) {
+      if (
+        isPending(shown) &&
+        now - shown.checkedAt < FRESH_MS &&
+        shown.revision === this.deps.store.revision() &&
+        (await currentAccount(this.deps.gmail)) === shown.account &&
+        // Again: something may have been saved while the account was read.
+        shown.revision === this.deps.store.revision()
+      ) {
         await this.write(restamp(shown, now));
         return this.state;
       }

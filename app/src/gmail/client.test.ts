@@ -147,6 +147,15 @@ describe("gmail client", () => {
     expect(JSON.parse(fetch.mock.calls[2]![1].body).ids).toHaveLength(500);
   });
 
+  it("asks for no more than the limit per page, and at most 500", async () => {
+    const fetch = vi.fn().mockImplementation(async () => json(200, {}));
+    const gmail = createGmail({ fetch, sleep: noSleep });
+    await gmail.listIds("", 1);
+    await gmail.listIds("", 1200);
+    await gmail.listIds("");
+    expect(fetch.mock.calls.map(([url]) => new URL(url as string, "https://x").searchParams.get("maxResults"))).toEqual(["1", "500", "500"]);
+  });
+
   it("sends labelIds and includeSpamTrash on list requests", async () => {
     const fetch = vi.fn().mockResolvedValue(json(200, {}));
     await createGmail({ fetch, sleep: noSleep }).listIds("", undefined, { labelIds: ["L1"], includeSpamTrash: true });
