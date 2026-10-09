@@ -26,6 +26,8 @@ export interface FakeGmail extends Gmail {
   labelsOf: Map<string, Set<string>>;
   /** Messages the user moved to Trash in Gmail (the app never does). */
   trashed: Set<string>;
+  /** Messages in Spam. */
+  spam: Set<string>;
   getSummaryCalls: number;
   failIds: Set<string>;
   expireAfter: number | null;
@@ -42,6 +44,7 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
   const fake: FakeGmail = {
     labelsOf: new Map(),
     trashed: new Set(),
+    spam: new Set(),
     getSummaryCalls: 0,
     failIds: new Set(),
     expireAfter: null,
@@ -49,11 +52,12 @@ export function createFakeGmail(messages: Summary[]): FakeGmail {
     sent: new Map(),
     async listIds(q, limit = Infinity, opts) {
       let ids: { id: string; threadId: string }[];
-      // The STARRED system label comes from the message summary; the others from `labelsOf`.
-      const has = (id: string, set: Set<string>, n: string) => (n === "STARRED" ? (byId.get(id)?.labels.includes("STARRED") ?? false) : set.has(n));
+      // STARRED comes from the message summary, TRASH and SPAM from `trashed` and `spam`; the others from `labelsOf`.
+      const has = (id: string, set: Set<string>, n: string) =>
+        n === "STARRED" ? (byId.get(id)?.labels.includes("STARRED") ?? false) : n === "TRASH" ? fake.trashed.has(id) : n === "SPAM" ? fake.spam.has(id) : set.has(n);
       const withLabels = (names: string[], anywhere: boolean) =>
         [...fake.labelsOf]
-          .filter(([id, set]) => names.every((n) => has(id, set, n)) && (anywhere || !fake.trashed.has(id)))
+          .filter(([id, set]) => names.every((n) => has(id, set, n)) && (anywhere || (!fake.trashed.has(id) && !fake.spam.has(id))))
           .map(([id]) => ({ id, threadId: id }));
       if (opts?.labelIds) {
         if (q !== "") throw new Error(`the fake reads labels by id only, got q=${JSON.stringify(q)}`);

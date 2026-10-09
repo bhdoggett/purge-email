@@ -5,7 +5,7 @@ import { testKey } from "../test/key.ts";
 import { ApplyRunner } from "./applyRunner.ts";
 import { ScanEngine } from "./engine.ts";
 import { createFakeGmail, fakeAnswers, idsWithLabel, makeSummary } from "./fakes.ts";
-import { previewReconcile } from "./reconcile.ts";
+import { isPending, previewReconcile } from "./reconcile.ts";
 
 const NOW = new Date(2026, 9, 7, 12).getTime();
 
@@ -52,14 +52,14 @@ describe("ApplyRunner", () => {
     expect(runner.busy()).toBe(false);
   });
 
-  it("check() with nothing pending counts the labels in Gmail", async () => {
+  it("check() with nothing pending takes the label totals from the plan", async () => {
     const { runner } = await arrange([]);
     await runner.check(DEFAULT_SETTINGS);
-    expect(runner.getState().counts).toEqual(new Map());
+    expect(runner.getState().preview?.totals).toEqual(new Map());
     expect(runner.getState().phase).toBe("done");
   });
 
-  it("apply() writes, re-checks, and ends in done with totals and the applied message", async () => {
+  it("apply() writes and ends in done with totals and the applied message", async () => {
     const { runner, gmail } = await arrange();
     await runner.check(DEFAULT_SETTINGS);
     const seen: number[] = [];
@@ -72,7 +72,8 @@ describe("ApplyRunner", () => {
     const s = runner.getState();
     expect(s.phase).toBe("done");
     expect(s.message).toBe("Added 2, moved 0, removed 0.");
-    expect(s.counts?.get("purge/promotion")).toBe(2);
+    expect(s.preview?.totals.get("purge/promotion")).toBe(2);
+    expect(isPending(s.preview!)).toBe(false);
     expect(seen).toContain(2);
     expect(runner.busy()).toBe(false);
   });
@@ -175,6 +176,170 @@ describe("ApplyRunner", () => {
     vi.spyOn(failing.gmail, "findLabelId").mockRejectedValue(new Error("down"));
     await failing.runner.check(DEFAULT_SETTINGS);
     expect(failing.runner.getState()).toMatchObject({ phase: "error", error: "Could not check Gmail. down" });
+  });
+});
+
+/** Spies on every Gmail read the plan makes. */
+function reads(gmail: ReturnType<typeof createFakeGmail>) {
+  const spies = [vi.spyOn(gmail, "listIds"), vi.spyOn(gmail, "findLabelId"), vi.spyOn(gmail, "getProfile")];
+  return { count: () => spies.reduce((n, s) => n + s.mock.calls.length, 0), clear: () => spies.forEach((s) => s.mockClear()) };
+}
+
+describe("ApplyRunner cached result", () => {
+  async function arrangeAt(ids = ["a", "b"]) {
+    const a = await arrange(ids);
+    let now = NOW;
+    const runner = new ApplyRunner({ gmail: a.gmail, store: a.store, isScanning: () => false, now: () => now });
+    return { ...a, runner, setNow: (t: number) => (now = t) };
+  }
+
+  it("check() records when it ran and the store revision it planned from", async () => {
+    const { runner, store } = await arrangeAt();
+    await runner.check(DEFAULT_SETTINGS);
+    expect(runner.getState().preview).toMatchObject({ checkedAt: NOW, revision: store.revision() });
+  });
+
+  it("visit() keeps the result without reading Gmail while nothing changed", async () => {
+    const { runner, gmail } = await arrangeAt();
+    await runner.visit(DEFAULT_SETTINGS);
+    const first = runner.getState();
+    expect(first.phase).toBe("done");
+    const r = reads(gmail);
+    await runner.visit(DEFAULT_SETTINGS);
+    expect(r.count()).toBe(0);
+    expect(runner.getState()).toBe(first);
+  });
+
+  it("visit() keeps a nothing-pending result whose store-only changes were saved", async () => {
+    const { runner, gmail, store } = await arrangeAt(["a"]);
+    const labelId = await gmail.ensureLabel("purge/promotion");
+    await gmail.addLabel(labelId, ["a"]);
+    await store.putLabels([{ id: "a", label: "purge/promotion", labeledAt: NOW - 600_000, userRemoved: false, userChosen: false }]);
+    await store.putOverrides(["a"], "promotion", NOW - 1);
+    await runner.check(DEFAULT_SETTINGS);
+    expect(isPending(runner.getState().preview!)).toBe(false);
+    const r = reads(gmail);
+    await runner.visit(DEFAULT_SETTINGS);
+    expect(r.count()).toBe(0);
+  });
+
+  it("visit() checks again after an override, settings, close rule or scan change", async () => {
+    const { runner, gmail, store } = await arrangeAt();
+    const changes: [string, () => Promise<void>][] = [
+      ["override", () => store.putOverrides(["a"], null, NOW + 1)],
+      ["settings", () => store.putSettings(DEFAULT_SETTINGS)],
+      ["close rule", () => store.putCloseRule({ minSent: 5, minYears: 1 })],
+      ["scan", async () => store.putScan((await store.getScan())!)],
+    ];
+    await runner.visit(DEFAULT_SETTINGS);
+    for (const [name, change] of changes) {
+      await change();
+      const r = reads(gmail);
+      await runner.visit(DEFAULT_SETTINGS);
+      expect(r.count(), name).toBeGreaterThan(0);
+      r.clear();
+      await runner.visit(DEFAULT_SETTINGS);
+      expect(r.count(), name).toBe(0);
+    }
+  });
+
+  it("visit() checks again after an error", async () => {
+    const { runner, gmail } = await arrangeAt();
+    const spy = vi.spyOn(gmail, "findLabelId").mockRejectedValueOnce(new Error("down"));
+    await runner.visit(DEFAULT_SETTINGS);
+    expect(runner.getState().phase).toBe("error");
+    spy.mockClear();
+    await runner.visit(DEFAULT_SETTINGS);
+    expect(spy).toHaveBeenCalled();
+    expect(runner.getState().phase).toBe("done");
+  });
+
+  it("apply() within 5 minutes of the check, with nothing changed, writes the shown plan without reading Gmail", async () => {
+    const { runner, gmail, store, setNow } = await arrangeAt();
+    await runner.check(DEFAULT_SETTINGS);
+    const shown = runner.getState().preview!;
+    setNow(NOW + 4 * 60_000);
+    const r = reads(gmail);
+    await runner.apply(DEFAULT_SETTINGS, shown);
+    expect(r.count()).toBe(0);
+    expect(idsWithLabel(gmail, "purge/promotion")).toEqual(["a", "b"]);
+    const s = runner.getState();
+    expect(s).toMatchObject({ phase: "done", message: "Added 2, moved 0, removed 0." });
+    expect(s.preview?.totals).toEqual(new Map([["purge/promotion", 2]]));
+    expect(isPending(s.preview!)).toBe(false);
+    // The records carry the moment of writing, not of the check.
+    expect((await store.allLabels()).get("a")?.labeledAt).toBe(NOW + 4 * 60_000);
+  });
+
+  it("apply() records its own writes, so the next visit keeps the done result", async () => {
+    const { runner, gmail } = await arrangeAt();
+    await runner.check(DEFAULT_SETTINGS);
+    await runner.apply(DEFAULT_SETTINGS, runner.getState().preview!);
+    const done = runner.getState();
+    const r = reads(gmail);
+    await runner.visit(DEFAULT_SETTINGS);
+    expect(r.count()).toBe(0);
+    expect(runner.getState()).toBe(done);
+  });
+
+  it("a change saved while Apply writes makes the next visit check again", async () => {
+    const { runner, gmail, store } = await arrangeAt();
+    await runner.check(DEFAULT_SETTINGS);
+    const h = hold(gmail);
+    const writing = runner.apply(DEFAULT_SETTINGS, runner.getState().preview!);
+    await h.started;
+    await store.putOverrides(["a"], null, NOW + 1);
+    h.release();
+    await writing;
+    const r = reads(gmail);
+    await runner.visit(DEFAULT_SETTINGS);
+    expect(r.count()).toBeGreaterThan(0);
+    expect(runner.getState().preview).toMatchObject({ removed: 1 });
+  });
+
+  it("apply() more than 5 minutes after the check plans again before writing", async () => {
+    const { runner, gmail, setNow } = await arrangeAt();
+    await runner.check(DEFAULT_SETTINGS);
+    const shown = runner.getState().preview!;
+    setNow(NOW + 5 * 60_000);
+    const r = reads(gmail);
+    const firstWrite = vi.spyOn(gmail, "addLabel");
+    await runner.apply(DEFAULT_SETTINGS, shown);
+    expect(r.count()).toBeGreaterThan(0);
+    expect(firstWrite).toHaveBeenCalled();
+  });
+
+  it("apply() after a store change plans again and refuses when the numbers differ", async () => {
+    const { runner, gmail, store } = await arrangeAt();
+    await runner.check(DEFAULT_SETTINGS);
+    const shown = runner.getState().preview!;
+    await store.putOverrides(["b"], null, NOW + 1);
+    const addLabel = vi.spyOn(gmail, "addLabel");
+    await runner.apply(DEFAULT_SETTINGS, shown);
+    expect(addLabel).not.toHaveBeenCalled();
+    expect(runner.getState()).toMatchObject({ phase: "done", message: "Gmail changed since this screen opened. Check the new numbers, then apply.", preview: { added: 1 } });
+  });
+
+  it("reads nothing from Gmail after the write", async () => {
+    const { runner, gmail, setNow } = await arrangeAt();
+    await runner.check(DEFAULT_SETTINGS);
+    setNow(NOW + 10 * 60_000);
+    const after: string[] = [];
+    let wrote = false;
+    const add = gmail.addLabel.bind(gmail);
+    gmail.addLabel = async (l, ids) => {
+      wrote = true;
+      return add(l, ids);
+    };
+    const list = gmail.listIds.bind(gmail);
+    gmail.listIds = async (q, limit, opts) => {
+      if (wrote) after.push("listIds");
+      return list(q, limit, opts);
+    };
+    await runner.apply(DEFAULT_SETTINGS, runner.getState().preview!);
+    expect(wrote).toBe(true);
+    expect(after).toEqual([]);
+    expect(runner.getState().preview?.totals).toEqual(new Map([["purge/promotion", 2]]));
   });
 });
 

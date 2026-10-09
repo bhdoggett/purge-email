@@ -2,7 +2,10 @@ import type { Settings } from "@core/decide.ts";
 import type { Gmail } from "../gmail/client.ts";
 import type { Store } from "../storage/db.ts";
 import { appliedMessage } from "../screens/applyModel.ts";
-import { applyPreview, countByLabel, isPending, type Preview, previewReconcile, type ReadStep } from "./reconcile.ts";
+import { applyPreview, isPending, type Preview, previewReconcile, type ReadStep } from "./reconcile.ts";
+
+/** A shown plan younger than this, with the store unchanged since, is written without reading Gmail again. */
+export const FRESH_MS = 5 * 60_000;
 
 export interface ApplyState {
   phase: "idle" | "checking" | "writing" | "done" | "error";
@@ -11,10 +14,13 @@ export interface ApplyState {
   /** Label operations written so far and in all, while writing. */
   done?: number;
   total?: number;
-  /** The latest plan: pending changes when `isPending`, otherwise nothing to do. */
+  /**
+   * The latest plan: pending changes when `isPending`, otherwise nothing to do. Its `totals` are the
+   * emails per label once applied; after Apply it is the applied plan with nothing left pending.
+   */
   preview?: Preview | null;
-  /** Message count per label in Gmail, once a check finds nothing pending. */
-  counts?: Map<string, number>;
+  /** The store revision this result matches; `visit` keeps the result while the store is still at it. Missing when unknown. */
+  revision?: number;
   message?: string;
   error?: string;
 }
@@ -30,6 +36,17 @@ export interface ApplyRunnerDeps {
 }
 
 const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
+
+/** `p` with the records it planned at its check stamped `at` instead, so they carry the moment of writing. */
+function restamp(p: Preview, at: number): Preview {
+  const put = p.plan.put.map((r) => (r.labeledAt === p.checkedAt ? { ...r, labeledAt: at } : r));
+  return { ...p, plan: { ...p.plan, put } };
+}
+
+/** `p` once written: the same totals, with nothing left to add, move or remove. */
+function applied(p: Preview): Preview {
+  return { ...p, plan: { ...p.plan, add: new Map(), remove: new Map(), put: [], del: [] }, added: 0, removed: 0, moved: 0, oldPrefixes: [] };
+}
 
 /** Owns the Apply job (checking Gmail, writing labels) so it keeps running when the screen is left. */
 export class ApplyRunner {
@@ -60,7 +77,7 @@ export class ApplyRunner {
     return { gmail: this.deps.gmail, store: this.deps.store, now: this.deps.now };
   }
 
-  /** Reads Gmail and plans. When nothing is pending, saves the plan's store-only changes and counts the labels. */
+  /** Reads Gmail and plans. When nothing is pending, saves the plan's store-only changes. */
   async check(settings: Settings): Promise<ApplyState> {
     if (this.running || this.deps.isScanning() || this.deps.isCounting?.()) return this.state;
     this.running = true;
@@ -73,24 +90,61 @@ export class ApplyRunner {
     return this.state;
   }
 
+  /** Keeps the last result while nothing that changes the plan was saved since; otherwise checks Gmail. */
+  async visit(settings: Settings): Promise<ApplyState> {
+    if (this.running) return this.state;
+    const s = this.state;
+    if (s.phase === "done" && s.revision !== undefined && s.revision === this.deps.store.revision()) {
+      // An old refusal (a scan was running) no longer applies.
+      if (s.error !== undefined) this.set({ ...s, error: undefined });
+      return this.state;
+    }
+    return this.check(settings);
+  }
+
   private async checkInner(settings: Settings, message: string | undefined): Promise<void> {
-    const { gmail, store } = this.deps;
     this.set({ phase: "checking", message });
     try {
       const preview = await previewReconcile(this.previewDeps(), settings, { onStep: (step) => this.set({ phase: "checking", step, message }) });
-      if (isPending(preview)) {
-        this.set({ phase: "done", preview, message });
-        return;
-      }
-      // Nothing to change in Gmail, but the plan may still stamp records (e.g. an override already in effect).
-      if ((preview.plan.put.length > 0 || preview.plan.del.length > 0) && !this.deps.isScanning()) await applyPreview({ gmail, store }, preview);
-      this.set({ phase: "done", preview, counts: await countByLabel(gmail, settings), message });
+      await this.show(preview, message);
     } catch (e) {
       this.set({ phase: "error", error: `Could not check Gmail. ${errorText(e)}`, message });
     }
   }
 
-  /** Plans again (so the records carry this moment), writes the plan if it still matches `shown`, then checks again. */
+  /** Shows a fresh plan. With nothing pending in Gmail, first saves the plan's store-only changes. */
+  private async show(preview: Preview, message: string | undefined): Promise<void> {
+    if (isPending(preview)) {
+      this.set({ phase: "done", preview, revision: preview.revision, message });
+      return;
+    }
+    let revision: number | undefined = preview.revision;
+    // Nothing to change in Gmail, but the plan may still stamp records (e.g. an override already in effect).
+    if (preview.plan.put.length > 0 || preview.plan.del.length > 0) {
+      // Unsaved records (a scan started) leave the result unmatched, so the next visit checks again.
+      revision = this.deps.isScanning() ? undefined : ((await applyPreview(this.deps, preview)) ?? undefined);
+    }
+    this.set({ phase: "done", preview, revision, message });
+  }
+
+  /** Writes a pending plan, then shows it as applied without reading Gmail again. */
+  private async write(preview: Preview): Promise<void> {
+    this.set({ phase: "writing", done: 0, total: 0, preview });
+    let revision: number | null;
+    try {
+      revision = await applyPreview(this.deps, preview, { onProgress: (done, total) => this.set({ phase: "writing", done, total, preview }) });
+    } catch (e) {
+      this.set({ phase: "error", error: `Could not apply the labels. ${errorText(e)}` });
+      return;
+    }
+    this.set({ phase: "done", preview: applied(preview), revision: revision ?? undefined, message: appliedMessage(preview, preview.oldPrefixes) });
+  }
+
+  /**
+   * Writes `shown`. When it was planned under 5 minutes ago and nothing was saved since, it is written as
+   * shown, its records stamped with this moment. Otherwise plans again and writes only if the numbers
+   * still match `shown`.
+   */
   async apply(settings: Settings, shown: Preview): Promise<ApplyState> {
     if (this.running) return this.state;
     if (this.deps.isScanning()) {
@@ -103,6 +157,11 @@ export class ApplyRunner {
     }
     this.running = true;
     try {
+      const now = (this.deps.now ?? Date.now)();
+      if (isPending(shown) && now - shown.checkedAt < FRESH_MS && shown.revision === this.deps.store.revision()) {
+        await this.write(restamp(shown, now));
+        return this.state;
+      }
       this.set({ phase: "checking" });
       let fresh: Preview;
       try {
@@ -112,21 +171,14 @@ export class ApplyRunner {
         return this.state;
       }
       if (!isPending(fresh)) {
-        await this.checkInner(settings, undefined);
+        await this.show(fresh, undefined).catch((e: unknown) => this.set({ phase: "error", error: `Could not check Gmail. ${errorText(e)}` }));
         return this.state;
       }
       if (fresh.added !== shown.added || fresh.moved !== shown.moved || fresh.removed !== shown.removed) {
         this.set({ phase: "done", preview: fresh, message: "Gmail changed since this screen opened. Check the new numbers, then apply." });
         return this.state;
       }
-      this.set({ phase: "writing", done: 0, total: 0, preview: fresh });
-      try {
-        await applyPreview(this.deps, fresh, { onProgress: (done, total) => this.set({ phase: "writing", done, total, preview: fresh }) });
-      } catch (e) {
-        this.set({ phase: "error", error: `Could not apply the labels. ${errorText(e)}` });
-        return this.state;
-      }
-      await this.checkInner(settings, appliedMessage(fresh, fresh.oldPrefixes));
+      await this.write(fresh);
     } finally {
       this.running = false;
     }

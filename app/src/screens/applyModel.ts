@@ -52,3 +52,9 @@ export function appliedMessage(p: PreviewCounts, oldPrefixes: string[]): string 
   const base = `Added ${p.added}, moved ${p.moved}, removed ${p.removed}.`;
   return oldPrefixes.length === 0 ? base : `${base} The old labels under "${oldPrefixes.join('", "')}" are now empty. You can delete them in Gmail.`;
 }
+
+/** "Checked 3:05": when Apply last read Gmail, in local time on a 12-hour clock. */
+export function checkedText(at: number): string {
+  const d = new Date(at);
+  return `Checked ${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")}`;
+}

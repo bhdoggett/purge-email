@@ -169,6 +169,14 @@ async function idsOf(gmail: Gmail, labelId: string, includeSpamTrash: boolean): 
   return (await gmail.listIds("", Infinity, { labelIds: [labelId], includeSpamTrash })).map((m) => m.id);
 }
 
+/** True when any message with label `labelId` is in Trash or Spam: two one-result lists, read by label id. */
+async function anyInSpamTrash(gmail: Gmail, labelId: string): Promise<boolean> {
+  for (const where of ["TRASH", "SPAM"]) {
+    if ((await gmail.listIds("", 1, { labelIds: [labelId, where], includeSpamTrash: true })).length > 0) return true;
+  }
+  return false;
+}
+
 export interface GmailLabelState {
   labelIds: Map<string, string>; // label name → Gmail label id, for labels that exist
   /** id → app label name on the message anywhere (Trash and Spam included). */
@@ -184,7 +192,10 @@ export interface ReadStep {
   label: string;
 }
 
-/** Reads which app labels (current prefix plus any recorded) are on which messages in Gmail. */
+/**
+ * Reads which app labels are on which messages in Gmail: every name under the current prefix, plus a
+ * former name only when a label record holds it.
+ */
 export async function readGmailState(
   gmail: Gmail,
   settings: Settings,
@@ -201,8 +212,12 @@ export async function readGmailState(
     const labelId = await gmail.findLabelId(name);
     if (labelId === null) continue;
     labelIds.set(name, labelId);
-    for (const id of await idsOf(gmail, labelId, true)) push(labelsOn, id, name);
-    for (const id of await idsOf(gmail, labelId, false)) live.add(id);
+    const anywhere = await idsOf(gmail, labelId, true);
+    for (const id of anywhere) push(labelsOn, id, name);
+    if (anywhere.length === 0) continue;
+    // With none of the label's mail in Trash or Spam, the full list is the live list: skip listing it again.
+    const liveIds = (await anyInSpamTrash(gmail, labelId)) ? await idsOf(gmail, labelId, false) : anywhere;
+    for (const id of liveIds) live.add(id);
   }
   // A message with several app labels (e.g. an interrupted move) counts as carrying its recorded one.
   const anywhere = new Map<string, string>();
@@ -223,6 +238,10 @@ export interface Preview {
   /** Prefixes of labels the plan empties that are not under the current prefix (old names after a rename). */
   oldPrefixes: string[];
   gmail: GmailLabelState;
+  /** When the plan was made (ms): its `now`. */
+  checkedAt: number;
+  /** The store's revision when the plan started reading it. */
+  revision: number;
 }
 
 export const isPending = (p: Pick<Preview, "added" | "removed" | "moved">): boolean => p.added + p.removed + p.moved > 0;
@@ -244,6 +263,7 @@ export function labelTotalsAfter(live: Set<string>, anywhere: Map<string, string
 export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?: () => number }, settings: Settings, opts?: { onStep?: (step: ReadStep) => void }): Promise<Preview> {
   const { gmail, store } = deps;
   const now = (deps.now ?? Date.now)();
+  const revision = store.revision();
   const scan = await store.getScan();
   // Without a finished scan there are no candidates, so a plan would strip every app label.
   if (!scan?.finished || !scan.settingsAtScan) throw new AppError({ kind: "Invalid", detail: "Scan your mail first." });
@@ -282,6 +302,8 @@ export async function previewReconcile(deps: { gmail: Gmail; store: Store; now?:
     totals: labelTotalsAfter(state.live, state.anywhere, plan),
     oldPrefixes,
     gmail: state,
+    checkedAt: now,
+    revision,
   };
 }
 
@@ -294,12 +316,16 @@ function chunks<T>(list: T[], size: number): T[][] {
   return out;
 }
 
-/** Writes a previewed plan to Gmail and the store. `onProgress` counts label operations (one per email per add or remove). */
+/**
+ * Writes a previewed plan to Gmail and the store. `onProgress` counts label operations (one per email per add or remove).
+ * Returns the store's revision after its own writes when nothing else wrote to the store since the plan was made,
+ * otherwise null: the result then no longer matches the store.
+ */
 export async function applyPreview(
   deps: { gmail: Gmail; store: Store },
   preview: Preview,
   opts?: { onProgress?: (done: number, total: number) => void },
-): Promise<void> {
+): Promise<number | null> {
   const { gmail, store } = deps;
   const { plan } = preview;
   const sum = (m: Map<string, string[]>) => [...m.values()].reduce((n, ids) => n + ids.length, 0);
@@ -332,9 +358,13 @@ export async function applyPreview(
       step(chunk.length);
     }
   }
+  const before = store.revision();
   await store.putLabels(plan.put);
   await store.deleteLabels(plan.del);
   // settingsAtScan records which rules the scan's candidate list covers, so only a finished scan sets it.
+  // Each of the two writes above goes up by one; any other step means someone else wrote too.
+  const after = store.revision();
+  return before === preview.revision && after === before + 2 ? after : null;
 }
 
 /** Brings the app's labels in Gmail in line with `settings` over the current scan's candidates. */
@@ -360,21 +390,4 @@ export async function prefixInUseByUser(gmail: Gmail, records: Map<string, Label
     if ((await gmail.listIds("", 1, { labelIds: [labelId], includeSpamTrash: true })).length > 0) return true;
   }
   return false;
-}
-
-/**
- * Message count per app label under the current prefix, skipping starred mail when it is protected.
- * Read by label id only (no search text): starred mail is subtracted using the STARRED label id.
- * Labels with none are left out.
- */
-export async function countByLabel(gmail: Gmail, settings: Settings): Promise<Map<string, number>> {
-  const counts = new Map<string, number>();
-  for (const name of appLabelNames(settings.labelPrefix)) {
-    const labelId = await gmail.findLabelId(name);
-    if (labelId === null) continue;
-    let n = (await gmail.listIds("", Infinity, { labelIds: [labelId] })).length;
-    if (settings.keepStarred && n > 0) n -= (await gmail.listIds("", Infinity, { labelIds: [labelId, "STARRED"] })).length;
-    if (n > 0) counts.set(name, n);
-  }
-  return counts;
 }

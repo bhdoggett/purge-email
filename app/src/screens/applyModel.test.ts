@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appliedMessage, buildRows, gmailLabelUrl, previewSummary, SETTLING_NOTE, totalOf } from "./applyModel.ts";
+import { appliedMessage, buildRows, checkedText, gmailLabelUrl, previewSummary, SETTLING_NOTE, totalOf } from "./applyModel.ts";
 
 describe("applyModel", () => {
   const counts = new Map([["purge/maybe", 4], ["purge/shipping", 2], ["purge/newsletter", 5], ["purge/scam", 0]]);
@@ -37,5 +37,11 @@ describe("applyModel", () => {
     expect(appliedMessage({ added: 0, moved: 3, removed: 0 }, ["purge"])).toBe(
       'Added 0, moved 3, removed 0. The old labels under "purge" are now empty. You can delete them in Gmail.',
     );
+  });
+
+  it("says when Gmail was last checked, as local h:mm", () => {
+    expect(checkedText(new Date(2026, 9, 7, 15, 5).getTime())).toBe("Checked 3:05");
+    expect(checkedText(new Date(2026, 9, 7, 0, 30).getTime())).toBe("Checked 12:30");
+    expect(checkedText(new Date(2026, 9, 7, 11, 59).getTime())).toBe("Checked 11:59");
   });
 });

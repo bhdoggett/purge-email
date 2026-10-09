@@ -9,11 +9,13 @@ import { RateLimitNote } from "../components/RateLimitNote.tsx";
 import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
 import { isPending, type ReadStep } from "../scan/reconcile.ts";
 import type { Services } from "../services.ts";
-import { buildRows, gmailLabelUrl, previewSummary, SETTLING_NOTE, totalOf } from "./applyModel.ts";
+import { buildRows, checkedText, gmailLabelUrl, previewSummary, SETTLING_NOTE, totalOf } from "./applyModel.ts";
 import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
 import { COUNTING_HINT, isCounting, useCounter } from "../useCounter.ts";
 import { useProgress } from "../useProgress.ts";
 import styles from "./Apply.module.css";
+
+const SCANNING_HINT = "A scan is running. Wait for it to finish.";
 
 type Gate = { kind: "noscan" } | { kind: "rescan"; settings: Settings } | { kind: "ready"; settings: Settings };
 
@@ -58,8 +60,8 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         setGate({ kind: "rescan", settings });
       } else {
         setGate({ kind: "ready", settings });
-        // Every visit checks Gmail again; a running job is never disturbed.
-        if (!applier.busy()) void applier.check(settings);
+        // A visit reuses the last result unless something that changes the plan was saved since; a running job is never disturbed.
+        if (!applier.busy()) void applier.visit(settings);
       }
       setGateError(null);
     } catch (e) {
@@ -74,6 +76,11 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
   function apply() {
     if (gate?.kind !== "ready" || state.phase !== "done" || !state.preview || working) return;
     void applier.apply(gate.settings, state.preview);
+  }
+
+  function checkAgain() {
+    if (gate?.kind !== "ready" || working || scanning || counting) return;
+    void applier.check(gate.settings);
   }
 
   function rescan() {
@@ -150,12 +157,27 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
 
   const { message, error } = state;
   const preview = state.preview;
+  // When Gmail was last read, with a way to read it again (e.g. after changes made directly in Gmail).
+  const checked = preview && (
+    <div className={styles.checked}>
+      <span className={styles.muted}>{checkedText(preview.checkedAt)}</span>
+      <Button
+        variant="secondary"
+        disabled={working || scanning || counting}
+        title={working ? APPLYING_HINT : counting ? COUNTING_HINT : scanning ? SCANNING_HINT : undefined}
+        onClick={checkAgain}
+      >
+        Check again
+      </Button>
+    </div>
+  );
   if (preview && isPending(preview)) {
     const rows = buildRows(preview.totals, gate.settings.labelPrefix);
     return (
       <section className={styles.review}>
         <h1 className={styles.heading}>Ready to label</h1>
         <p className={styles.lede}>{previewSummary(preview)}</p>
+        {checked}
         <ul className={styles.rows}>
           {rows.map((r) => (
             <li key={r.name} className={styles.row}>
@@ -180,7 +202,8 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
   }
 
   const settings = gate.settings;
-  const rows = buildRows(state.counts ?? new Map(), settings.labelPrefix);
+  // Counts come from the plan, not from reading Gmail again.
+  const rows = buildRows(preview?.totals ?? new Map(), settings.labelPrefix);
   const deferred = preview?.plan.deferred ?? 0;
   if (totalOf(rows) === 0) {
     return (
@@ -196,6 +219,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
             <p className={styles.lede}>Your review gives no email a label. Go back to Review to change that.</p>
           </>
         )}
+        {checked}
         <Button onClick={() => go("review")}>Back to Review</Button>
         {message && <p role="status">{message}</p>}
         {error && <p className={styles.error} role="alert">{error}</p>}
@@ -206,6 +230,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
   return (
     <section className={styles.review}>
       <h1 className={styles.heading}>{totalOf(rows).toLocaleString()} emails labeled under "{settings.labelPrefix}"</h1>
+      {checked}
       <p className={styles.lede}>
         This app only adds labels. It never deletes anything. Look through each label in Gmail. To keep an email, remove its label. Starring it isn't
         enough: selecting all and deleting in Gmail deletes everything under the label, starred mail included. Jev left the rest unlabeled.
@@ -228,7 +253,9 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
           </li>
         ))}
       </ul>
-      {settings.keepStarred && <p className={styles.muted}>Counts leave out starred emails, but Gmail's select-all still deletes them.</p>}
+      {settings.keepStarred && (
+        <p className={styles.muted}>The app doesn't label starred emails. One you star after it was labeled still counts here, and Gmail's select-all still deletes it.</p>
+      )}
 
       <h2 className={styles.subheading}>Delete them in Gmail yourself</h2>
       <p className={styles.muted}>Turn off conversation view first, or deleting a thread also deletes newer replies in it.</p>

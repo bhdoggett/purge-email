@@ -10,7 +10,7 @@ import { createFakeGmail, fakeAnswers, idsWithLabel, knownClose, makeSummary } f
 import { AppError } from "../bridge/errors.ts";
 import { GmailError } from "../gmail/client.ts";
 import { appLabelNames } from "@core/labels.ts";
-import { applyPreview, countByLabel, readGmailState, scanCounts, isPending, labelTotalsAfter, planReconcile, prefixInUseByUser, previewReconcile, type ReconcileInput, reconcile, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
+import { applyPreview, readGmailState, scanCounts, isPending, labelTotalsAfter, planReconcile, prefixInUseByUser, previewReconcile, type ReconcileInput, reconcile, summarize, USER_CHANGE_GRACE_MS } from "./reconcile.ts";
 
 /** A real date, so mail dated 2014 (the makeSummary default) is old enough for the default age. */
 const NOW = new Date(2026, 9, 7, 12).getTime();
@@ -540,33 +540,6 @@ describe("reconcile", () => {
   });
 });
 
-describe("countByLabel", () => {
-  it("counts app labels with mail, skipping starred mail only when it is protected", async () => {
-    const gmail = createFakeGmail([makeSummary("a"), makeSummary("b", { labels: ["STARRED"] }), makeSummary("c")]);
-    gmail.labelsOf.set("a", new Set(["purge/promotion"]));
-    gmail.labelsOf.set("b", new Set(["purge/promotion"]));
-    gmail.labelsOf.set("c", new Set(["other/scam"]));
-    expect(await countByLabel(gmail, DEFAULT_SETTINGS)).toEqual(new Map([["purge/promotion", 1]]));
-    expect(await countByLabel(gmail, { ...DEFAULT_SETTINGS, keepStarred: false })).toEqual(new Map([["purge/promotion", 2]]));
-  });
-
-  it("reads by label id with no search text, subtracting the label-and-STARRED list", async () => {
-    const gmail = createFakeGmail([makeSummary("a"), makeSummary("b", { labels: ["STARRED"] })]);
-    gmail.labelsOf.set("a", new Set(["purge/promotion"]));
-    gmail.labelsOf.set("b", new Set(["purge/promotion"]));
-    gmail.labelsOf.set("s", new Set(["purge/scam"]));
-    const listIds = vi.spyOn(gmail, "listIds");
-    await countByLabel(gmail, DEFAULT_SETTINGS);
-    expect(listIds.mock.calls.every(([q]) => q === "")).toBe(true);
-    expect(listIds).toHaveBeenCalledWith("", Infinity, { labelIds: ["purge/promotion"] });
-    expect(listIds).toHaveBeenCalledWith("", Infinity, { labelIds: ["purge/promotion", "STARRED"] });
-
-    // A label holding only starred mail is left out when starred mail is protected.
-    gmail.labelsOf.set("a", new Set());
-    expect(await countByLabel(gmail, DEFAULT_SETTINGS)).toEqual(new Map([["purge/scam", 1]]));
-  });
-});
-
 describe("prefixInUseByUser", () => {
   it("is true when labels under the prefix hold mail and the app has no records under it", async () => {
     const gmail = createFakeGmail([makeSummary("a"), makeSummary("b")]);
@@ -908,3 +881,72 @@ describe("trivial personal mail and close people", () => {
   });
 });
 
+
+describe("readGmailState reads less", () => {
+  const settings = DEFAULT_SETTINGS;
+  /** Today's reading: every name listed twice, with and without Trash and Spam. */
+  async function slowState(gmail: ReturnType<typeof createFakeGmail>, names: string[], records: Map<string, LabelRecord>) {
+    const labelsOn = new Map<string, string[]>();
+    const live = new Set<string>();
+    for (const name of names) {
+      const labelId = await gmail.findLabelId(name);
+      if (labelId === null) continue;
+      for (const { id } of await gmail.listIds("", Infinity, { labelIds: [labelId], includeSpamTrash: true })) labelsOn.set(id, [...(labelsOn.get(id) ?? []), name]);
+      for (const { id } of await gmail.listIds("", Infinity, { labelIds: [labelId], includeSpamTrash: false })) live.add(id);
+    }
+    const anywhere = new Map<string, string>();
+    for (const [id, labels] of labelsOn) {
+      const recorded = records.get(id)?.label;
+      anywhere.set(id, recorded !== undefined && labels.includes(recorded) ? recorded : labels[0]!);
+    }
+    return { anywhere, live };
+  }
+  const fullLiveListings = (spy: { mock: { calls: unknown[][] } }) =>
+    spy.mock.calls.filter(([q, limit, opts]) => q === "" && limit === Infinity && !(opts as { includeSpamTrash?: boolean }).includeSpamTrash);
+
+  it("reads a former label name only when a label record holds it", async () => {
+    const gmail = createFakeGmail([]);
+    gmail.labelsOf.set("a", new Set(["old/newsletter"]));
+    gmail.labelsOf.set("b", new Set(["older/scam"]));
+    const findLabelId = vi.spyOn(gmail, "findLabelId");
+    const state = await readGmailState(gmail, settings, new Map([["a", rec("a", "old/newsletter", { userRemoved: true })]]));
+    const read = findLabelId.mock.calls.map(([n]) => n);
+    expect(read).toContain("old/newsletter");
+    expect(read).not.toContain("older/scam");
+    expect(read).toEqual(expect.arrayContaining(appLabelNames(settings.labelPrefix)));
+    expect(state.anywhere).toEqual(new Map([["a", "old/newsletter"]]));
+  });
+
+  it("lists a label once when none of its mail is in Trash or Spam", async () => {
+    const gmail = createFakeGmail([]);
+    gmail.labelsOf.set("a", new Set(["purge/promotion"]));
+    gmail.labelsOf.set("b", new Set(["purge/promotion"]));
+    const listIds = vi.spyOn(gmail, "listIds");
+    const state = await readGmailState(gmail, settings, new Map());
+    expect(fullLiveListings(listIds)).toEqual([]);
+    expect(state.live).toEqual(new Set(["a", "b"]));
+    expect(state.anywhere).toEqual(new Map([["a", "purge/promotion"], ["b", "purge/promotion"]]));
+  });
+
+  it("matches today's two listings when labeled mail sits in Trash and Spam", async () => {
+    const gmail = createFakeGmail([]);
+    gmail.labelsOf.set("a", new Set(["purge/promotion"]));
+    gmail.labelsOf.set("b", new Set(["purge/promotion"]));
+    gmail.labelsOf.set("c", new Set(["purge/newsletter"]));
+    gmail.labelsOf.set("d", new Set(["purge/newsletter", "purge/scam"]));
+    gmail.labelsOf.set("e", new Set(["old/maybe"]));
+    gmail.labelsOf.set("f", new Set(["purge/scam"]));
+    gmail.trashed.add("b");
+    gmail.spam.add("c");
+    gmail.trashed.add("e");
+    const records = new Map([["d", rec("d", "purge/scam")], ["e", rec("e", "old/maybe")]]);
+    const expected = await slowState(gmail, [...appLabelNames(settings.labelPrefix), "old/maybe"], records);
+    const listIds = vi.spyOn(gmail, "listIds");
+    const state = await readGmailState(gmail, settings, records);
+    expect(state.anywhere).toEqual(expected.anywhere);
+    expect(state.live).toEqual(expected.live);
+    expect(state.live).toEqual(new Set(["a", "d", "f"]));
+    // Only labels with mail in Trash or Spam are listed a second time.
+    expect(fullLiveListings(listIds).map(([, , opts]) => (opts as { labelIds: string[] }).labelIds[0]).sort()).toEqual(["old/maybe", "purge/newsletter", "purge/promotion"]);
+  });
+});

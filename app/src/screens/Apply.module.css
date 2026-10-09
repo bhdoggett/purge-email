@@ -70,3 +70,10 @@
   display: flex;
   gap: var(--space-3);
 }
+.checked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-3) 0;
+}
