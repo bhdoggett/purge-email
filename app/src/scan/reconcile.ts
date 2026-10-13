@@ -36,6 +36,26 @@ export interface ReconcilePlan {
   userChosen: number;
   /** Just-labeled ids left alone because Gmail's lists don't confirm their label yet. */
   deferred: number;
+  /** Where the candidates that get a label from the review stand in Gmail. */
+  breakdown: LabelBreakdown;
+}
+
+/**
+ * The candidates whose review gives them a label, split by what Apply does with them. Every one is
+ * in exactly one part, so the parts add up to `wanted`.
+ */
+export interface LabelBreakdown {
+  wanted: number;
+  /** Gain or change their label in this Apply. */
+  toAdd: number;
+  /** Already carry the label they should have. */
+  already: number;
+  /** In Trash or Spam, which Apply never touches. */
+  inTrash: number;
+  /** The user removed or changed the app's label in Gmail, and Apply leaves that alone. */
+  changedInGmail: number;
+  /** Labeled in the last few minutes; waiting for Gmail's lists to confirm it. */
+  waiting: number;
 }
 
 /** Gmail answers 400 or 409 when it refuses a label name. */
@@ -83,7 +103,8 @@ function push(map: Map<string, string[]>, key: string, id: string) {
  * An override newer than the app's last label on an email beats the user's earlier Gmail change.
  */
 export function planReconcile(i: ReconcileInput): ReconcilePlan {
-  const plan: ReconcilePlan = { add: new Map(), remove: new Map(), put: [], del: [], userRemoved: 0, userChosen: 0, deferred: 0 };
+  const breakdown: LabelBreakdown = { wanted: 0, toAdd: 0, already: 0, inTrash: 0, changedInGmail: 0, waiting: 0 };
+  const plan: ReconcilePlan = { add: new Map(), remove: new Map(), put: [], del: [], userRemoved: 0, userChosen: 0, deferred: 0, breakdown };
   const records = new Map(i.records);
   // An override only means something for an email that is still a candidate.
   const candidateSet = new Set(i.candidates);
@@ -160,6 +181,23 @@ export function planReconcile(i: ReconcileInput): ReconcilePlan {
     } else if (r) {
       plan.del.push(id);
     }
+  }
+
+  // 5. Account for every candidate the review gives a label, in the same order step 4 decides.
+  for (const id of i.candidates) {
+    const want = desired.get(id) ?? null;
+    if (want === null) continue;
+    breakdown.wanted++;
+    const r = records.get(id);
+    const isLive = i.live.has(id);
+    const current = isLive ? i.anywhere.get(id)! : null;
+    if (!isLive && i.anywhere.has(id)) breakdown.inTrash++;
+    else if (r && (r.userRemoved || r.userChosen) && !overrideWins(r)) {
+      if (current === want) breakdown.already++;
+      else breakdown.changedInGmail++;
+    } else if (r && inGrace(r) && current !== r.label) breakdown.waiting++;
+    else if (current === want) breakdown.already++;
+    else breakdown.toAdd++;
   }
   return plan;
 }

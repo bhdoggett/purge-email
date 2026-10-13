@@ -275,6 +275,46 @@ describe("planReconcile", () => {
   });
 });
 
+describe("planReconcile breakdown", () => {
+  const news = () => fakeAnswers({ newsletter: 0.95 });
+
+  it("splits the emails Review labels by what Apply does with them", () => {
+    const plan = planReconcile(
+      input(
+        { add: news(), done: news(), trashed: news(), removed: news(), moved: news(), settling: news(), kept: fakeAnswers({}) },
+        {
+          records: new Map([
+            ["done", rec("done", "purge/newsletter")],
+            ["trashed", rec("trashed", "purge/newsletter")],
+            ["removed", rec("removed", "purge/newsletter")],
+            ["moved", rec("moved", "purge/newsletter")],
+            ["settling", rec("settling", "purge/newsletter", { labeledAt: JUST })],
+          ]),
+          anywhere: new Map([["done", "purge/newsletter"], ["trashed", "purge/newsletter"], ["moved", "purge/scam"]]),
+          live: new Set(["done", "moved"]),
+        },
+      ),
+    );
+    expect(plan.breakdown).toEqual({ wanted: 6, toAdd: 1, already: 1, inTrash: 1, changedInGmail: 2, waiting: 1 });
+  });
+
+  it("counts an unrecorded label that matches the review as already labeled", () => {
+    const plan = planReconcile(input({ a: news() }, labeled({ a: "purge/newsletter" })));
+    expect(plan.breakdown).toMatchObject({ wanted: 1, already: 1, changedInGmail: 0 });
+  });
+
+  it("counts a Review choice newer than the user's Gmail removal as to add", () => {
+    const records = new Map([["a", rec("a", "purge/newsletter", { userRemoved: true })]]);
+    const overrides = new Map([["a", { id: "a", slug: "newsletter", at: NOW }]]);
+    const plan = planReconcile(input({ a: news() }, { records, overrides }));
+    expect(plan.breakdown).toMatchObject({ wanted: 1, toAdd: 1, changedInGmail: 0 });
+  });
+
+  it("leaves out candidates whose summary is missing", () => {
+    expect(planReconcile(input({ a: news() }, { summaries: new Map() })).breakdown.wanted).toBe(0);
+  });
+});
+
 describe("planReconcile with overrides", () => {
   const promo = fakeAnswers({ promotion: 0.97 });
   const ov = (id: string, slug: string | null, at = NOW - 1) => new Map([[id, { id, slug, at }]]);

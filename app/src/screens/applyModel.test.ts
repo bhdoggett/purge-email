@@ -1,7 +1,27 @@
 import { describe, expect, it } from "vitest";
-import { appliedMessage, buildRows, checkedText, gmailLabelUrl, previewSummary, SETTLING_NOTE, totalOf } from "./applyModel.ts";
+import { appliedMessage, breakdownText, buildRows, checkedText, gmailLabelUrl, previewSummary, SETTLING_NOTE, skippedNotes, totalOf } from "./applyModel.ts";
 
 describe("applyModel", () => {
+  const none = { wanted: 0, toAdd: 0, already: 0, inTrash: 0, changedInGmail: 0, waiting: 0 };
+
+  it("explains how the emails Review labels split up, leaving out zero parts", () => {
+    const b = { ...none, wanted: 515, toAdd: 88, already: 300, inTrash: 120, changedInGmail: 7 };
+    expect(breakdownText(b)).toBe("515 emails get a label from your review: 88 to add, 300 already labeled, 120 in Trash or Spam, 7 you unlabeled or relabeled in Gmail.");
+    expect(breakdownText({ ...none, wanted: 1, waiting: 1 })).toBe("1 email gets a label from your review: 1 waiting on Gmail.");
+  });
+
+  it("says nothing extra when every email is to add, or every one already labeled", () => {
+    expect(breakdownText({ ...none, wanted: 5, toAdd: 5 })).toBeNull();
+    expect(breakdownText({ ...none, wanted: 5, already: 5 })).toBeNull();
+    expect(breakdownText(none)).toBeNull();
+    expect(breakdownText({ ...none, wanted: 5, toAdd: 2, already: 3 })).toBe("5 emails get a label from your review: 2 to add, 3 already labeled.");
+  });
+
+  it("explains only the reasons that apply", () => {
+    expect(skippedNotes({ ...none, wanted: 2, toAdd: 2 })).toEqual([]);
+    expect(skippedNotes({ ...none, wanted: 2, inTrash: 1, changedInGmail: 1 })).toHaveLength(2);
+  });
+
   const counts = new Map([["purge/maybe", 4], ["purge/shipping", 2], ["purge/newsletter", 5], ["purge/scam", 0]]);
 
   it("orders kinds by PURGE_KINDS with maybe last and drops empty labels", () => {

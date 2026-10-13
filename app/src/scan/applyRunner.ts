@@ -46,7 +46,9 @@ function restamp(p: Preview, at: number): Preview {
 
 /** `p` once written: the same totals, with nothing left to add, move or remove. */
 function applied(p: Preview): Preview {
-  return { ...p, plan: { ...p.plan, add: new Map(), remove: new Map(), put: [], del: [] }, added: 0, removed: 0, moved: 0, oldPrefixes: [] };
+  const b = p.plan.breakdown;
+  const breakdown = { ...b, toAdd: 0, already: b.already + b.toAdd };
+  return { ...p, plan: { ...p.plan, add: new Map(), remove: new Map(), put: [], del: [], breakdown }, added: 0, removed: 0, moved: 0, oldPrefixes: [] };
 }
 
 /** Owns the Apply job (checking Gmail, writing labels) so it keeps running when the screen is left. */

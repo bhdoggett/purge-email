@@ -1,5 +1,6 @@
 import { KIND_SLUGS, MAYBE, PERSONAL_SLUG } from "@core/labels.ts";
 import { PURGE_KINDS } from "@core/questions.ts";
+import type { LabelBreakdown } from "../scan/reconcile.ts";
 
 export interface ApplyRow {
   name: string;
@@ -46,6 +47,33 @@ export function previewSummary(p: PreviewCounts): string {
     p.removed > 0 ? `Remove ${p.removed.toLocaleString("en-US")}` : null,
   ].filter((x): x is string => x !== null);
   return parts.length > 0 ? parts.join(" · ") : "Gmail already matches your review.";
+}
+
+/**
+ * How the emails Review labels split up in Gmail, e.g. "515 emails get a label from your review: 88 to add,
+ * 300 already labeled, 120 in Trash or Spam." Null when every one of them is simply to add or already labeled
+ * this run, since the counts above already say that.
+ */
+export function breakdownText(b: LabelBreakdown): string | null {
+  if (b.inTrash + b.changedInGmail + b.waiting === 0 && (b.toAdd === 0 || b.already === 0)) return null;
+  const n = (x: number) => x.toLocaleString("en-US");
+  const parts = [
+    b.toAdd > 0 ? `${n(b.toAdd)} to add` : null,
+    b.already > 0 ? `${n(b.already)} already labeled` : null,
+    b.inTrash > 0 ? `${n(b.inTrash)} in Trash or Spam` : null,
+    b.changedInGmail > 0 ? `${n(b.changedInGmail)} you unlabeled or relabeled in Gmail` : null,
+    b.waiting > 0 ? `${n(b.waiting)} waiting on Gmail` : null,
+  ].filter((x): x is string => x !== null);
+  const head = `${n(b.wanted)} ${b.wanted === 1 ? "email gets" : "emails get"} a label from your review`;
+  return `${head}: ${parts.join(", ")}.`;
+}
+
+/** Why some emails from Review aren't labeled, shown only for the reasons that apply. */
+export function skippedNotes(b: LabelBreakdown): string[] {
+  return [
+    b.inTrash > 0 ? "The app never labels mail in Trash or Spam." : null,
+    b.changedInGmail > 0 ? "Mail whose label you removed or changed in Gmail is left the way you set it. Choose a label for it in Review to override." : null,
+  ].filter((x): x is string => x !== null);
 }
 
 export function appliedMessage(p: PreviewCounts, oldPrefixes: string[]): string {

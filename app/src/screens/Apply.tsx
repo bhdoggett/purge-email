@@ -7,9 +7,9 @@ import { Button } from "../components/Button.tsx";
 import { ProgressBar } from "../components/ProgressBar.tsx";
 import { RateLimitNote } from "../components/RateLimitNote.tsx";
 import { DEV_SCAN_LIMIT } from "../scan/progress.ts";
-import { isPending, type ReadStep } from "../scan/reconcile.ts";
+import { isPending, type LabelBreakdown, type ReadStep } from "../scan/reconcile.ts";
 import type { Services } from "../services.ts";
-import { buildRows, checkedText, gmailLabelUrl, previewSummary, SETTLING_NOTE, totalOf } from "./applyModel.ts";
+import { breakdownText, buildRows, checkedText, gmailLabelUrl, previewSummary, SETTLING_NOTE, skippedNotes, totalOf } from "./applyModel.ts";
 import { APPLYING_HINT, isApplying, useApplier } from "../useApplier.ts";
 import { COUNTING_HINT, isCounting, useCounter } from "../useCounter.ts";
 import { useProgress } from "../useProgress.ts";
@@ -177,6 +177,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
       <section className={styles.review}>
         <h1 className={styles.heading}>Ready to label</h1>
         <p className={styles.lede}>{previewSummary(preview)}</p>
+        <Breakdown breakdown={preview.plan.breakdown} />
         {checked}
         <ul className={styles.rows}>
           {rows.map((r) => (
@@ -230,6 +231,7 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
   return (
     <section className={styles.review}>
       <h1 className={styles.heading}>{totalOf(rows).toLocaleString()} emails labeled under "{settings.labelPrefix}"</h1>
+      {preview && <Breakdown breakdown={preview.plan.breakdown} />}
       {checked}
       <p className={styles.lede}>
         This app only adds labels. It never deletes anything. Look through each label in Gmail. To keep an email, remove its label. Starring it isn't
@@ -266,5 +268,19 @@ export function Apply({ services, go }: { services: Services; go: (s: Screen) =>
         <li>Select all and delete. This deletes everything still under the label, including starred mail. Gmail keeps deleted mail in Trash for 30 days.</li>
       </ol>
     </section>
+  );
+}
+
+/** How the emails Review labels split up in Gmail, and why any of them aren't labeled. */
+function Breakdown({ breakdown }: { breakdown: LabelBreakdown }) {
+  const text = breakdownText(breakdown);
+  if (text === null) return null;
+  return (
+    <div className={styles.breakdown}>
+      <p className={styles.muted}>{text}</p>
+      {skippedNotes(breakdown).map((note) => (
+        <p key={note} className={styles.muted}>{note}</p>
+      ))}
+    </div>
   );
 }

@@ -77,3 +77,9 @@
   gap: var(--space-3);
   margin: var(--space-3) 0;
 }
+.breakdown {
+  max-width: 60ch;
+}
+.breakdown p {
+  margin: 0 0 var(--space-1);
+}
