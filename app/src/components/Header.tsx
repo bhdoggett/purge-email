@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { Progress } from "../scan/progress.ts";
 import { currentTheme, otherTheme, setTheme } from "../theme.ts";
 import { UNAVAILABLE_HINT } from "../stages.ts";
+import { BrandMark } from "./BrandMark.tsx";
 import styles from "./Header.module.css";
 
 const ACTIVE = new Set(["finding", "judging"]);
@@ -49,10 +50,14 @@ export function Header({ progress, email, screen, onNavigate, onSettings, availa
     <header className={styles.header}>
       {onNavigate ? (
         <button type="button" className={styles.title} onClick={() => onNavigate("rules")}>
+          <BrandMark />
           Purge Email
         </button>
       ) : (
-        <span className={styles.title}>Purge Email</span>
+        <span className={styles.title}>
+          <BrandMark />
+          Purge Email
+        </span>
       )}
       {onNavigate && (
         <nav aria-label="Stages">

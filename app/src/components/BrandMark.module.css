@@ -1,0 +1,8 @@
+/* The icon file has transparent padding around its tile, so it is drawn larger than the text. */
+.mark {
+  display: block;
+  width: 1.9em;
+  height: 1.9em;
+  margin: -0.3em 0;
+  flex-shrink: 0;
+}
